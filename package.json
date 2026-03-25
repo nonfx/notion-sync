@@ -1,0 +1,57 @@
+{
+  "name": "notion-rsync",
+  "version": "0.1.6",
+  "description": "Rsync for Notion - Sync Notion pages to local markdown files",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "notion-rsync": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nonfx/notion-sync.git"
+  },
+  "homepage": "https://github.com/nonfx/notion-sync#readme",
+  "bugs": {
+    "url": "https://github.com/nonfx/notion-sync/issues"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "bun build ./src/cli.ts --outdir ./dist --target node --format esm --minify --sourcemap=linked",
+    "lint": "oxlint src/",
+    "format": "oxfmt src/",
+    "format:check": "oxfmt --check src/",
+    "check": "bun run lint && bun run format:check",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "notion",
+    "markdown",
+    "sync",
+    "rsync",
+    "cli",
+    "notion-api",
+    "docs-as-code",
+    "backup",
+    "export"
+  ],
+  "author": "nonfx",
+  "license": "MIT",
+  "devDependencies": {
+    "@notionhq/client": "^2.2.15",
+    "@types/bun": "latest",
+    "oxfmt": "^0.27.0",
+    "oxlint": "^1.42.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {}
+}

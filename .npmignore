@@ -1,0 +1,44 @@
+# Source files (bundled into dist/)
+src/
+*.ts
+!dist/*.js
+tsconfig.json
+
+# Development config
+.oxlintrc.json
+.oxfmtrc.json
+.env.example
+.env*
+
+# Documentation (not needed for package)
+PLAN.md
+PLAN-STAGE-2.md
+TODO.md
+CLAUDE.md
+AGENTS.md
+
+# Development artifacts
+node_modules/
+bun.lock
+coverage/
+*.lcov
+*.tsbuildinfo
+.cache/
+
+# Git and IDE
+.git/
+.gitignore
+.github/
+.idea/
+.DS_Store
+
+# Test files
+test/
+tests/
+*.test.ts
+*.spec.ts
+test-output/
+docs/
+
+# Notion rsync state
+.notion-rsync/
