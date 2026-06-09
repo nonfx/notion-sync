@@ -46,9 +46,7 @@ describe("blockToMarkdown", () => {
 
     it("converts paragraph with external link", () => {
       const result = blockToMarkdown(paragraphWithLink);
-      expect(result).toBe(
-        "Check out [this link](https://example.com) for more info.\n"
-      );
+      expect(result).toBe("Check out [this link](https://example.com) for more info.\n");
     });
 
     it("converts paragraph with page mention (notion:// URL)", () => {
@@ -169,15 +167,26 @@ describe("blockToMarkdown", () => {
       // Create context with database entries
       const context: RenderContext = {
         databases: new Map([
-          [childDatabaseBlock.id, [
-            { id: "page-1", title: "First Entry", properties: { Status: "Active", Priority: "High" } },
-            { id: "page-2", title: "Second Entry", properties: { Status: "Done", Priority: "Low" } },
-          ]],
+          [
+            childDatabaseBlock.id,
+            [
+              {
+                id: "page-1",
+                title: "First Entry",
+                properties: { Status: "Active", Priority: "High" },
+              },
+              {
+                id: "page-2",
+                title: "Second Entry",
+                properties: { Status: "Done", Priority: "Low" },
+              },
+            ],
+          ],
         ]),
       };
-      
+
       const result = blockToMarkdown(childDatabaseBlock, 0, context);
-      
+
       // Should render as table
       expect(result).toContain("**My Database**");
       expect(result).toContain("| Page | Status | Priority |");
@@ -186,6 +195,19 @@ describe("blockToMarkdown", () => {
       expect(result).toContain("Active");
       expect(result).toContain("[Second Entry](notion://page-2)");
       expect(result).toContain("Done");
+    });
+  });
+
+  describe("table cell escaping", () => {
+    it("escapes backslashes and pipes in database cells", () => {
+      const context: RenderContext = {
+        databases: new Map([
+          [childDatabaseBlock.id, [{ id: "p1", title: "a\\b|c", properties: {} }]],
+        ]),
+      };
+      const result = blockToMarkdown(childDatabaseBlock, 0, context);
+      // Backslash escaped before pipe so the escape isn't itself broken.
+      expect(result).toContain("[a\\\\b\\|c](notion://p1)");
     });
   });
 
@@ -203,10 +225,10 @@ describe("blocksToMarkdown", () => {
   it("joins list items without extra blank lines", () => {
     const result = blocksToMarkdown(numberedListItems);
     const lines = result.split("\n").filter((line) => line.trim() !== "");
-    
+
     expect(lines).toEqual([
       "1. Open Audit tab",
-      "1. Click \"New Audit\"",
+      '1. Click "New Audit"',
       "1. Enter: name, description, and other fields",
     ]);
   });
@@ -214,25 +236,21 @@ describe("blocksToMarkdown", () => {
   it("joins bulleted list items without extra blank lines", () => {
     const result = blocksToMarkdown(bulletedListItems);
     const lines = result.split("\n").filter((line) => line.trim() !== "");
-    
-    expect(lines).toEqual([
-      "- First item",
-      "- Second item",
-      "- Third item",
-    ]);
+
+    expect(lines).toEqual(["- First item", "- Second item", "- Third item"]);
   });
 
   it("adds blank lines between different block types", () => {
     const blocks = [heading1Block, paragraphBlock];
     const result = blocksToMarkdown(blocks);
-    
+
     // Should have blank line between heading and paragraph
     expect(result).toBe("# Main Heading\n\nThis is a simple paragraph.\n");
   });
 
   it("handles mixed content correctly", () => {
     const result = blocksToMarkdown(mixedContentBlocks);
-    
+
     // Check structure: headings, lists, paragraphs are separated properly
     expect(result).toContain("# Main Heading");
     expect(result).toContain("## Section Heading");
@@ -240,7 +258,7 @@ describe("blocksToMarkdown", () => {
     expect(result).toContain("- Second item");
     expect(result).toContain("- Third item");
     expect(result).toContain("---");
-    
+
     // Lists should NOT have blank lines between items
     const listSection = result.match(/- First item[\s\S]*- Third item/);
     expect(listSection).toBeTruthy();

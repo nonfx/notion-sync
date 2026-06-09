@@ -63,10 +63,7 @@ export function createNotionClient(options: NotionClientOptions): Client {
  * Retry wrapper with exponential backoff for rate limits
  * Respects Retry-After header from Notion API
  */
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = 5
-): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -74,11 +71,15 @@ export async function withRetry<T>(
       return await fn();
     } catch (err: unknown) {
       lastError = err;
-      
+
       // Check if it's a rate limit error
-      const isRateLimited = 
-        (err instanceof Error && (err.message.includes("rate limited") || err.message.includes("429"))) ||
-        (typeof err === "object" && err !== null && "status" in err && (err as {status: number}).status === 429);
+      const isRateLimited =
+        (err instanceof Error &&
+          (err.message.includes("rate limited") || err.message.includes("429"))) ||
+        (typeof err === "object" &&
+          err !== null &&
+          "status" in err &&
+          (err as { status: number }).status === 429);
 
       if (isRateLimited) {
         if (attempt === maxRetries) {
@@ -87,18 +88,24 @@ export async function withRetry<T>(
 
         // Try to get Retry-After from the error (Notion client includes headers)
         let delay = 1000 * Math.pow(2, attempt); // Default exponential backoff
-        
+
         if (typeof err === "object" && err !== null && "headers" in err) {
-          const headers = (err as {headers: Headers}).headers;
+          const headers = (err as { headers: Headers }).headers;
           const retryAfter = headers?.get?.("retry-after");
           if (retryAfter) {
             delay = parseInt(retryAfter, 10) * 1000; // Convert seconds to ms
-            log.warn(`Rate limited, Retry-After: ${retryAfter}s (attempt ${attempt + 1}/${maxRetries + 1})`);
+            log.warn(
+              `Rate limited, Retry-After: ${retryAfter}s (attempt ${attempt + 1}/${maxRetries + 1})`
+            );
           } else {
-            log.warn(`Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`);
+            log.warn(
+              `Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`
+            );
           }
         } else {
-          log.warn(`Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`);
+          log.warn(
+            `Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`
+          );
         }
 
         await new Promise((resolve) => setTimeout(resolve, delay));

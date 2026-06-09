@@ -1,6 +1,11 @@
 # Notion Rsync
 
-One-way sync from Notion pages to local markdown files. Idempotent.
+Sync between Notion pages and local markdown files. Idempotent.
+
+- **Pull** (`sync`): Notion → local markdown (Stage 1).
+- **Push** (`push`): local markdown → Notion, mirroring folder hierarchy and
+  re-creating internal links as page mentions (Stage 2). Works for round-trip
+  (files with `notion_id` frontmatter) and brand-new folders.
 
 ## Stack
 
@@ -23,10 +28,24 @@ bun run test         # Run tests
 ```
 src/
 ├── cli.ts           # CLI entry point
-├── notion/          # Notion API client (TODO)
-├── markdown/        # Block → Markdown conversion (TODO)
-├── sync/            # Sync engine, state tracking
-│   ├── engine.ts    # Main sync orchestration
+├── notion/          # Notion API client
+│   ├── client.ts    # Read operations (pages, blocks, databases)
+│   ├── tree.ts      # Build page tree from Notion
+│   └── writer.ts    # Write operations (create/update pages, append blocks)
+├── markdown/        # Block ↔ Markdown conversion
+│   ├── blocks.ts    # Notion block → Markdown (pull)
+│   ├── rich-text.ts # Notion rich text → Markdown (pull)
+│   ├── links.ts     # notion:// → relative path (pull)
+│   ├── parser.ts    # Markdown → Notion blocks (push)
+│   ├── inline.ts    # Markdown → Notion rich text (push)
+│   └── frontmatter.ts # Parse frontmatter + body (push)
+├── local/           # Local markdown tree (push source)
+│   ├── scan.ts      # Directory → page tree
+│   └── links.ts     # relative path → notion:// (push)
+├── sync/            # Sync engines, state tracking
+│   ├── engine.ts    # Pull orchestration (Notion → local)
+│   ├── push.ts      # Push orchestration (local → Notion)
+│   ├── partial.ts   # Sync specific pages by id
 │   ├── init.ts      # Initialize config
 │   ├── index.ts     # State index for idempotency
 │   └── status.ts    # Show sync status

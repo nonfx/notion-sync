@@ -134,20 +134,26 @@ export function blockToMarkdown(block: NotionBlock, indent = 0, context?: Render
       // Handle unofficial heading levels (h4-h6) that can exist as custom blocks
       const blockType = (block as NotionBlock).type as string;
       const blockData = block as Record<string, unknown>;
-      
+
       if (blockType === "heading_4" && blockData["heading_4"]) {
-        const h4 = blockData["heading_4"] as { rich_text: Parameters<typeof richTextToMarkdown>[0] };
+        const h4 = blockData["heading_4"] as {
+          rich_text: Parameters<typeof richTextToMarkdown>[0];
+        };
         return `#### ${richTextToMarkdown(h4.rich_text)}\n`;
       }
       if (blockType === "heading_5" && blockData["heading_5"]) {
-        const h5 = blockData["heading_5"] as { rich_text: Parameters<typeof richTextToMarkdown>[0] };
+        const h5 = blockData["heading_5"] as {
+          rich_text: Parameters<typeof richTextToMarkdown>[0];
+        };
         return `##### ${richTextToMarkdown(h5.rich_text)}\n`;
       }
       if (blockType === "heading_6" && blockData["heading_6"]) {
-        const h6 = blockData["heading_6"] as { rich_text: Parameters<typeof richTextToMarkdown>[0] };
+        const h6 = blockData["heading_6"] as {
+          rich_text: Parameters<typeof richTextToMarkdown>[0];
+        };
         return `###### ${richTextToMarkdown(h6.rich_text)}\n`;
       }
-      
+
       return `<!-- Unknown block type: ${blockType} -->\n`;
     }
   }
@@ -406,10 +412,10 @@ function renderChildDatabase(
 ): string {
   const title = block.child_database.title;
   const dbId = block.id;
-  
+
   // Get database entries from context
   const entries = context?.databases.get(dbId) || context?.databases.get(dbId.replace(/-/g, ""));
-  
+
   // If no entries data, fall back to a link
   if (!entries || entries.length === 0) {
     return `**${title}**\n\n[View database](notion://${dbId})\n`;
@@ -417,7 +423,7 @@ function renderChildDatabase(
 
   // Build table from entries
   const lines: string[] = [];
-  
+
   // Add database title as heading
   lines.push(`**${title}**\n`);
 
@@ -428,27 +434,25 @@ function renderChildDatabase(
       propertyKeys.add(key);
     }
   }
-  
+
   // Build header row: Title + other properties (limit to first 3 properties to keep table readable)
   const displayKeys = Array.from(propertyKeys).slice(0, 3);
   const headers = ["Page", ...displayKeys];
   lines.push(`| ${headers.join(" | ")} |`);
   lines.push(`| ${headers.map(() => "---").join(" | ")} |`);
-  
+
   // Build data rows
   for (const entry of entries) {
-    const cells: string[] = [
-      `[${escapeTableCell(entry.title)}](notion://${entry.id})`,
-    ];
-    
+    const cells: string[] = [`[${escapeTableCell(entry.title)}](notion://${entry.id})`];
+
     for (const key of displayKeys) {
       const value = entry.properties[key];
       cells.push(escapeTableCell(formatPropertyValue(value)));
     }
-    
+
     lines.push(`| ${cells.join(" | ")} |`);
   }
-  
+
   return lines.join("\n") + "\n";
 }
 
@@ -467,10 +471,8 @@ function formatPropertyValue(value: unknown): string {
  * Escape special characters in table cells
  */
 function escapeTableCell(text: string): string {
-  return text
-    .replace(/\|/g, "\\|")
-    .replace(/\n/g, " ")
-    .trim();
+  // Escape backslashes first so we don't double-escape the ones we add below.
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
 }
 
 function renderChildren(children: NotionBlock[] | undefined, indent: number): string {

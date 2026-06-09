@@ -9,7 +9,7 @@ export type LinkMap = Map<string, string>;
 
 /**
  * Resolve notion:// URLs in markdown content to relative local paths
- * 
+ *
  * @param content - Markdown content with notion:// URLs
  * @param currentFilePath - Path of the current file (relative to output dir)
  * @param linkMap - Map of Notion IDs to file paths
@@ -27,10 +27,10 @@ export function resolveNotionLinks(
   return content.replace(notionUrlPattern, (match, notionId) => {
     // Normalize ID (remove dashes for lookup)
     const normalizedId = notionId.replace(/-/g, "");
-    
+
     // Try both formats
     let targetPath = linkMap.get(notionId) || linkMap.get(normalizedId);
-    
+
     if (!targetPath) {
       // Link to unknown page - keep original URL as comment
       return match;
@@ -39,7 +39,7 @@ export function resolveNotionLinks(
     // Calculate relative path from current file to target
     const currentDir = dirname(currentFilePath);
     const relativePath = relative(currentDir, targetPath);
-    
+
     // Use ./ prefix for same directory, otherwise the relative path
     return relativePath.startsWith("..") ? relativePath : "./" + relativePath;
   });
