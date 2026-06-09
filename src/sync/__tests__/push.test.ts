@@ -255,3 +255,62 @@ describe("push - dry run", () => {
     await expect(readFile(join(dir, ".notion-rsync", "index.json"), "utf-8")).rejects.toThrow();
   });
 });
+
+describe("push - idempotency (notion_id write-back)", () => {
+  beforeEach(async () => {
+    await writeFile(join(dir, "index.md"), "# Home\n\nWelcome. See the [Guide](./guide.md).\n");
+    await writeFile(join(dir, "guide.md"), "# Guide\n\nHow to use the thing.\n");
+  });
+
+  it("stamps notion_id into newly-created files", async () => {
+    const fake = new FakeNotion();
+    await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+
+    const home = await readFile(join(dir, "index.md"), "utf-8");
+    const guide = await readFile(join(dir, "guide.md"), "utf-8");
+
+    expect(home).toContain(`notion_id: ${fake.page("Home").id}`);
+    expect(guide).toContain(`notion_id: ${fake.page("Guide").id}`);
+    // Body content is preserved.
+    expect(home).toContain("Welcome.");
+  });
+
+  it("re-pushing updates in place — no duplicates", async () => {
+    const fake = new FakeNotion();
+    const first = await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+    expect(first.created).toBe(2);
+
+    // Second push reads the stamped notion_id frontmatter and updates.
+    const second = await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+    expect(second.created).toBe(0);
+    expect(second.updated).toBe(2);
+    expect(fake.pages.size).toBe(2); // still just the two original pages
+  });
+
+  it("stays idempotent via the sync index even if frontmatter is stripped", async () => {
+    const fake = new FakeNotion();
+    await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+
+    // Simulate a user removing frontmatter from a file.
+    await writeFile(join(dir, "guide.md"), "# Guide\n\nEdited, no frontmatter.\n");
+
+    const second = await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+    expect(second.created).toBe(0); // index path→id lookup prevents a duplicate
+    expect(fake.pages.size).toBe(2);
+  });
+
+  it("materializes an index.md for a folder without one", async () => {
+    await mkdir(join(dir, "extras"));
+    await writeFile(join(dir, "extras", "note.md"), "# Note\n\nA note.\n");
+
+    const fake = new FakeNotion();
+    await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+
+    const created = await readFile(join(dir, "extras", "index.md"), "utf-8");
+    expect(created).toContain(`notion_id: ${fake.page("Extras").id}`);
+
+    // And a re-push is idempotent now that the index.md exists.
+    const second = await push({ outputDir: dir, parentPageId: "root-parent", writer: fake });
+    expect(second.created).toBe(0);
+  });
+});

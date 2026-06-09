@@ -19,13 +19,20 @@ All notable changes to this project will be documented in this file.
     (`local/links.ts`).
   - Notion write client (`notion/writer.ts`) with batched appends; clearing a
     page's content preserves child pages so subpages are never archived.
+  - **Idempotent**: after creating pages, `push` stamps the new `notion_id`
+    (and title) back into each local file's frontmatter, and materialises an
+    `index.md` for folders that lack one. Re-pushing therefore updates pages in
+    place instead of creating duplicates. As a fallback, the sync index is also
+    consulted by path, so idempotency holds even if frontmatter is removed.
+
+- **CI: release pipeline** - Added `.github/workflows/release.yml` to publish to
+  npm on `v*` tags. Re-runs lint/format/test/build, verifies the tag matches
+  `package.json`, publishes with npm provenance, and gates the publish step
+  behind a protected `release` environment.
 
 ### Notes
 
 - Content updates use clear-and-replace (no block-level diffing yet).
-- Brand-new files are not yet stamped with their `notion_id` after creation, so
-  re-pushing a brand-new folder without the generated index can create
-  duplicates. Round-trip pushes (with frontmatter ids) are idempotent.
 
 ## [0.1.5] - 2026-01-29
 

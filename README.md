@@ -186,6 +186,9 @@ notion-rsync push abc123def456 --output ./my-new-docs
 - Files without one are created. The optional `page-id` argument is the parent
   page for new top-level pages; if omitted, the root from `.notion-rsync`
   (created by `init`/`sync`) is used.
+- **Idempotent**: after creating a page, `push` writes the new `notion_id` back
+  into the file's frontmatter (and creates an `index.md` for folders without
+  one), so running it again updates pages in place rather than duplicating them.
 
 Options:
 - `--output, -o` - Source directory (default: ./docs)
@@ -268,8 +271,8 @@ bun run format
 
 - [x] Retry logic for rate limits
 - [x] Two-way sync — push local markdown back to Notion (`push`)
+- [x] Idempotent push — stamps `notion_id` into new files so re-push updates in place
 - [ ] Push: block-level diffing (currently clear-and-replace content)
-- [ ] Push: stamp `notion_id` into new files for idempotent re-push
 - [ ] Conflict detection & resolution
 - [ ] Progress indicators
 - [ ] Configuration file support

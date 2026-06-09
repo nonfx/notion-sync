@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { parseMarkdownFile } from "../frontmatter.ts";
+import { parseMarkdownFile, upsertFrontmatter } from "../frontmatter.ts";
 
 describe("parseMarkdownFile", () => {
   it("extracts notion_id and title from frontmatter", () => {
@@ -75,5 +75,80 @@ x
 `;
     const parsed = parseMarkdownFile(raw);
     expect(parsed.frontmatter["tags"]).toEqual(["a", "b"]);
+  });
+});
+
+describe("upsertFrontmatter", () => {
+  it("creates frontmatter when none exists", () => {
+    const out = upsertFrontmatter("# Guide\n\nBody.\n", {
+      notion_id: "abc-123",
+      title: '"Guide"',
+    });
+    expect(out).toBe('---\nnotion_id: abc-123\ntitle: "Guide"\n---\n\n# Guide\n\nBody.\n');
+  });
+
+  it("updates an existing key and preserves the rest", () => {
+    const raw = `---
+notion_id: old
+title: "Guide"
+status: "Draft"
+---
+
+Body.
+`;
+    const out = upsertFrontmatter(raw, { notion_id: "new" });
+    expect(out).toContain("notion_id: new");
+    expect(out).toContain('title: "Guide"');
+    expect(out).toContain('status: "Draft"');
+    expect(out).toContain("Body.");
+  });
+
+  it("appends a missing key without disturbing others", () => {
+    const raw = `---
+title: "Guide"
+---
+
+Body.
+`;
+    const out = upsertFrontmatter(raw, { notion_id: "abc" });
+    expect(out).toContain('title: "Guide"');
+    expect(out).toContain("notion_id: abc");
+  });
+
+  it("preserves a leading generated-header comment", () => {
+    const raw = `<!--
+  Auto-generated. Do not edit.
+-->
+---
+title: "Guide"
+---
+
+Body.
+`;
+    const out = upsertFrontmatter(raw, { notion_id: "abc" });
+    expect(out.startsWith("<!--")).toBe(true);
+    expect(out).toContain("notion_id: abc");
+  });
+
+  it("is stable when the key already has the target value", () => {
+    const raw = `---
+notion_id: abc
+title: "Guide"
+---
+
+Body.
+`;
+    expect(upsertFrontmatter(raw, { notion_id: "abc", title: '"Guide"' })).toBe(raw);
+  });
+
+  it("round-trips through parseMarkdownFile", () => {
+    const stamped = upsertFrontmatter("# Guide\n\nBody.\n", {
+      notion_id: "abc-123",
+      title: '"Guide"',
+    });
+    const parsed = parseMarkdownFile(stamped);
+    expect(parsed.notionId).toBe("abc-123");
+    expect(parsed.title).toBe("Guide");
+    expect(parsed.body.trim()).toBe("Body.");
   });
 });

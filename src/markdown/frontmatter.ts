@@ -111,3 +111,52 @@ function unquote(value: string): string {
   }
   return value;
 }
+
+const LEADING_HEADER_RE = /^\s*<!--[\s\S]*?-->\s*\n?/;
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
+
+/**
+ * Insert or update top-level frontmatter keys in a markdown file, preserving
+ * the generated-header comment, any other frontmatter, and the body.
+ *
+ * Values are written verbatim (the caller formats them — e.g. quote strings).
+ * Used by `push` to stamp `notion_id` back into newly-created files so a later
+ * sync recognises them and stays idempotent instead of creating duplicates.
+ */
+export function upsertFrontmatter(raw: string, updates: Record<string, string>): string {
+  const content = raw.replace(/^﻿/, ""); // strip BOM
+
+  // Preserve a leading generated-header comment, if present.
+  let header = "";
+  let rest = content;
+  const headerMatch = LEADING_HEADER_RE.exec(content);
+  if (headerMatch && content.trimStart().startsWith("<!--")) {
+    header = content.slice(0, headerMatch[0].length);
+    rest = content.slice(headerMatch[0].length);
+  }
+
+  const keys = Object.keys(updates);
+  const fmMatch = FRONTMATTER_RE.exec(rest);
+
+  if (fmMatch) {
+    const seen = new Set<string>();
+    const lines = fmMatch[1]!.split("\n").map((line) => {
+      const kv = /^([\w-]+)\s*:/.exec(line);
+      if (kv && updates[kv[1]!] !== undefined) {
+        seen.add(kv[1]!);
+        return `${kv[1]}: ${updates[kv[1]!]}`;
+      }
+      return line;
+    });
+    for (const key of keys) {
+      if (!seen.has(key)) lines.push(`${key}: ${updates[key]}`);
+    }
+    const body = rest.slice(fmMatch[0].length);
+    return `${header}---\n${lines.join("\n")}\n---\n${body}`;
+  }
+
+  // No frontmatter yet — create one ahead of the body.
+  const fmLines = keys.map((key) => `${key}: ${updates[key]}`);
+  const body = rest.replace(/^\n+/, "");
+  return `${header}---\n${fmLines.join("\n")}\n---\n\n${body}`;
+}
