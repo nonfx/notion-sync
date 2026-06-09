@@ -85,6 +85,24 @@ describe("parseInline", () => {
     ]);
   });
 
+  it("drops an unresolved relative link but keeps the text", () => {
+    expect(parseInline("[Guide](./guide.md)")).toEqual([
+      { type: "text", text: { content: "Guide" } },
+    ]);
+  });
+
+  it("drops a bare anchor link but keeps the text", () => {
+    expect(parseInline("[Section](#section)")).toEqual([
+      { type: "text", text: { content: "Section" } },
+    ]);
+  });
+
+  it("keeps a mailto: link", () => {
+    expect(parseInline("[Email](mailto:a@b.com)")).toEqual([
+      { type: "text", text: { content: "Email", link: { url: "mailto:a@b.com" } } },
+    ]);
+  });
+
   it("parses inline equation", () => {
     expect(parseInline("$E = mc^2$")).toEqual([
       { type: "equation", equation: { expression: "E = mc^2" } },

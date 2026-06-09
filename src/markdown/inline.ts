@@ -73,16 +73,25 @@ function buildLink(label: string, url: string, ann: Annotations): RichTextReques
   }
 
   // Regular link — parse the label for nested formatting and attach the URL
-  // to each resulting text item.
+  // to each resulting text item. Notion only accepts absolute URLs in links,
+  // so if the URL isn't valid (e.g. an unresolved relative `.md` path, a bare
+  // `#anchor`, or a local asset), keep the visible text but drop the link.
   const inner = parseSegment(label, ann);
-  if (inner.length === 0) return [makeText(label, ann, url)];
+  const items = inner.length > 0 ? inner : [makeText(label, ann)];
 
-  for (const item of inner) {
-    if (item.type !== "mention" && item.text) {
-      item.text.link = { url };
+  if (isValidLinkUrl(url)) {
+    for (const item of items) {
+      if (item.type !== "mention" && item.text) {
+        item.text.link = { url };
+      }
     }
   }
-  return inner;
+  return items;
+}
+
+/** Notion link URLs must be absolute (have a scheme like https:, mailto:). */
+function isValidLinkUrl(url: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(url);
 }
 
 /** Match `[label](url)` at the given position. */
