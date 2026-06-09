@@ -63,7 +63,10 @@ export function normalizeNotionId(id: string): string {
 
 function buildLink(label: string, url: string, ann: Annotations): RichTextRequest[] {
   if (url.startsWith(NOTION_LINK_PREFIX)) {
-    const id = normalizeNotionId(url.slice(NOTION_LINK_PREFIX.length));
+    // A page mention targets a page, not a heading anchor — strip any
+    // `#anchor` (and query) so the id is a valid UUID.
+    const raw = url.slice(NOTION_LINK_PREFIX.length).split(/[#?]/)[0]!;
+    const id = normalizeNotionId(raw);
     const item: RichTextRequest = { type: "mention", mention: { page: { id } } };
     if (hasAnnotations(ann)) item.annotations = { ...ann };
     return [item];

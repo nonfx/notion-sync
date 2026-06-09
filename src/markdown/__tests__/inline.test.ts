@@ -76,6 +76,15 @@ describe("parseInline", () => {
     ]);
   });
 
+  it("drops an anchor from a notion mention id (pages can't target anchors)", () => {
+    const result = parseInline(
+      "[Availability](notion://37ae4ea0-0265-81eb-b897-fe059e91cc52#availability-context)"
+    );
+    expect(result).toEqual([
+      { type: "mention", mention: { page: { id: "37ae4ea0-0265-81eb-b897-fe059e91cc52" } } },
+    ]);
+  });
+
   it("parses inline equation", () => {
     expect(parseInline("$E = mc^2$")).toEqual([
       { type: "equation", equation: { expression: "E = mc^2" } },

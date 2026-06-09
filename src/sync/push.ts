@@ -146,27 +146,10 @@ export async function push(options: PushOptions): Promise<PushResult> {
 
   await ensurePages(topNodes, { id: rootParentId ?? "", type: rootParentType });
 
-  // ---- Pass 2: push content (links now resolvable to real page ids). ----
-  for (const node of allNodes) {
-    const pageId = resolvedIds.get(node)!;
-    const resolvedBody = resolveLocalLinks(node.body, node.relPath, pathIdMap);
-    const blocks = parseMarkdownBlocks(resolvedBody);
-
-    if (options.dryRun) {
-      log.info(`[dry-run] Would write ${blocks.length} block(s) to: ${node.relPath}`);
-      continue;
-    }
-
-    await writer.clearBlocks(pageId);
-    if (blocks.length > 0) {
-      await writer.appendBlocks(pageId, blocks);
-    }
-    log.info(`Pushed content: ${node.relPath} (${blocks.length} blocks)`);
-  }
-
   // ---- Stamp notion_id back into files that didn't already carry one. ----
-  // This makes the local tree self-describing so the next push recognises
-  // these pages and updates them in place instead of creating duplicates.
+  // Done immediately after creation (before the riskier content push) so a
+  // mid-push failure still leaves the tree self-describing: a re-run then
+  // recognises these pages and updates them in place instead of duplicating.
   if (!options.dryRun) {
     for (const node of allNodes) {
       if (node.notionId) continue; // already self-describing
@@ -185,6 +168,24 @@ export async function push(options: PushOptions): Promise<PushResult> {
       }
       log.debug(`Stamped notion_id into ${node.relPath}`);
     }
+  }
+
+  // ---- Pass 2: push content (links now resolvable to real page ids). ----
+  for (const node of allNodes) {
+    const pageId = resolvedIds.get(node)!;
+    const resolvedBody = resolveLocalLinks(node.body, node.relPath, pathIdMap);
+    const blocks = parseMarkdownBlocks(resolvedBody);
+
+    if (options.dryRun) {
+      log.info(`[dry-run] Would write ${blocks.length} block(s) to: ${node.relPath}`);
+      continue;
+    }
+
+    await writer.clearBlocks(pageId);
+    if (blocks.length > 0) {
+      await writer.appendBlocks(pageId, blocks);
+    }
+    log.info(`Pushed content: ${node.relPath} (${blocks.length} blocks)`);
   }
 
   // ---- Update the sync index so a subsequent pull/push stays idempotent. ----
