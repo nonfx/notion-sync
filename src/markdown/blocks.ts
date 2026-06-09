@@ -471,7 +471,8 @@ function formatPropertyValue(value: unknown): string {
  * Escape special characters in table cells
  */
 function escapeTableCell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
+  // Escape backslashes first so we don't double-escape the ones we add below.
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
 }
 
 function renderChildren(children: NotionBlock[] | undefined, indent: number): string {

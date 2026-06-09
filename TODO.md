@@ -87,7 +87,7 @@
 See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 
 ### Phase 2.1: Markdown to Notion Conversion
-- [x] Implement markdown parser (hand-rolled, zero deps — `markdown/parser.ts`)
+- [x] Implement Markdown parser (hand-rolled, zero deps — `markdown/parser.ts`)
 - [x] Build markdown → Notion block-request converter
 - [x] Handle the block types Stage 1 emits + common hand-authored markdown
 - [x] Inline parser for rich text (`markdown/inline.ts`): bold/italic/strike/code/links/equations/mentions
@@ -223,7 +223,7 @@ See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 
 6. **Frontmatter `notion_id` drives update-vs-create** - Round-trip files carry `notion_id`; those pages are updated in place. Files without it (brand-new folders) are created under a target parent page. This makes "edit locally and push back" and "upload a fresh folder" the same code path.
 
-7. **Hand-rolled markdown parser over remark** - The project has zero runtime deps and bundles for npm. A line-based parser covering the constructs the reader emits (plus common GFM) keeps it dependency-free and round-trips reliably. The triple-marker `***bold italic***` case needs explicit handling before `**` to avoid mis-splitting.
+7. **Hand-rolled Markdown parser over remark** - The project has zero runtime deps and bundles for npm. A line-based parser covering the constructs the reader emits (plus common GFM) keeps it dependency-free and round-trips reliably. The triple-marker `***bold italic***` case needs explicit handling before `**` to avoid mis-splitting.
 
 8. **Notion code `language` is an enum** - Unknown languages are rejected by the API. Normalize to the valid set and fall back to `plain text` (mapping common aliases like `ts`→`typescript`).
 

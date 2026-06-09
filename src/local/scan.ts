@@ -11,7 +11,9 @@
  * This also works for brand-new, hand-authored folder structures.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+// `readdir` has no Bun equivalent; file contents are read via Bun.file() per
+// the project's file-I/O guideline.
+import { readdir } from "node:fs/promises";
 import { join, basename, relative } from "node:path";
 import { parseMarkdownFile } from "../markdown/frontmatter.ts";
 import { INDEX_DIR } from "../sync/index.ts";
@@ -116,7 +118,7 @@ async function readNode(
   rootDir: string,
   children: LocalNode[]
 ): Promise<LocalNode> {
-  const raw = await readFile(filePath, "utf-8");
+  const raw = await Bun.file(filePath).text();
   const parsed = parseMarkdownFile(raw);
   const title = parsed.title ?? titleFromFilename(basename(filePath));
 

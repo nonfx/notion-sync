@@ -198,6 +198,19 @@ describe("blockToMarkdown", () => {
     });
   });
 
+  describe("table cell escaping", () => {
+    it("escapes backslashes and pipes in database cells", () => {
+      const context: RenderContext = {
+        databases: new Map([
+          [childDatabaseBlock.id, [{ id: "p1", title: "a\\b|c", properties: {} }]],
+        ]),
+      };
+      const result = blockToMarkdown(childDatabaseBlock, 0, context);
+      // Backslash escaped before pipe so the escape isn't itself broken.
+      expect(result).toContain("[a\\\\b\\|c](notion://p1)");
+    });
+  });
+
   describe("tables", () => {
     it("converts table with headers", () => {
       const result = blockToMarkdown(tableBlock);

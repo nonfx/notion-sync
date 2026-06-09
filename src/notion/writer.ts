@@ -120,10 +120,16 @@ async function appendRecursive(
   }
 
   // Append deferred children under their now-created parent blocks.
+  // If a parent id is missing the append silently dropped a block, so fail
+  // loudly rather than losing the children.
   for (const { index, children } of deferred) {
     const childParentId = createdIds[index];
-    if (childParentId) {
-      await appendRecursive(client, childParentId, children);
+    if (!childParentId) {
+      throw new Error(
+        `Notion append returned ${createdIds.length} of ${requestBlocks.length} blocks; ` +
+          `cannot attach ${children.length} child block(s) to missing parent at index ${index}.`
+      );
     }
+    await appendRecursive(client, childParentId, children);
   }
 }
