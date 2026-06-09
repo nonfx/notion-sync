@@ -4,11 +4,14 @@
 [![npm downloads](https://img.shields.io/npm/dm/notion-rsync.svg)](https://www.npmjs.com/package/notion-rsync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-One-way sync from Notion to local Markdown files. Fast, idempotent, and designed for docs-as-code workflows.
+Two-way sync between Notion and local Markdown files. Fast, idempotent, and designed for docs-as-code workflows.
 
 ```bash
-# Sync your Notion workspace to markdown
+# Pull your Notion workspace down to markdown
 notion-rsync sync --output ./docs
+
+# Push local markdown back up to Notion
+notion-rsync push --output ./docs
 ```
 
 **[npm](https://www.npmjs.com/package/notion-rsync)** | **[GitHub](https://github.com/nonfx/notion-sync)** | **[Issues](https://github.com/nonfx/notion-sync/issues)**
@@ -23,8 +26,10 @@ notion-rsync sync --output ./docs
 
 ## Features
 
+- **Two-way sync** - Pull from Notion (`sync`) and push back up (`push`)
 - Sync pages **and databases** (including nested databases)
-- Preserves hierarchy as folder structure
+- Preserves hierarchy as folder structure (both directions)
+- Re-creates internal links between pages as Notion page mentions on push
 - Rich frontmatter with all database properties
 - Handles 20+ block types (text, lists, tables, code, callouts, toggles, equations, embeds...)
 - Gracefully renders unsupported blocks (AI blocks, etc.) as HTML
@@ -82,6 +87,22 @@ notion-rsync sync --output ./docs
 # Or preview first
 notion-rsync sync --output ./docs --dry-run
 ```
+
+### 4. Push Changes Back (optional)
+
+Edit the local markdown, then push it back up to Notion:
+
+```bash
+# Push edits back to the pages they came from
+notion-rsync push --output ./docs
+
+# Or upload a brand-new folder under an existing Notion page
+notion-rsync push abc123def456 --output ./my-new-docs
+```
+
+`push` updates existing pages in place (matched by the `notion_id` in each
+file's frontmatter) and creates pages for any new files, mirroring your folder
+structure and rewriting relative `.md` links as Notion page mentions.
 
 ## Output Structure
 
@@ -146,6 +167,29 @@ notion-rsync sync --output ./docs [--dry-run]
 Options:
 - `--output, -o` - Output directory (default: ./docs)
 - `--dry-run, -n` - Preview changes without writing files
+- `--verbose, -v` - Enable verbose logging
+
+### `push [page-id]`
+
+Push local markdown back up to Notion, mirroring the folder hierarchy and
+re-creating internal links as page mentions.
+
+```bash
+# Round-trip: update the pages a synced folder came from
+notion-rsync push --output ./docs
+
+# Brand-new: create the folder's pages under a target Notion page
+notion-rsync push abc123def456 --output ./my-new-docs
+```
+
+- Files with a `notion_id` in frontmatter update their existing page in place.
+- Files without one are created. The optional `page-id` argument is the parent
+  page for new top-level pages; if omitted, the root from `.notion-rsync`
+  (created by `init`/`sync`) is used.
+
+Options:
+- `--output, -o` - Source directory (default: ./docs)
+- `--dry-run, -n` - Preview what would be created/updated without writing
 - `--verbose, -v` - Enable verbose logging
 
 ### `status`
@@ -223,10 +267,13 @@ bun run format
 ## Roadmap
 
 - [x] Retry logic for rate limits
+- [x] Two-way sync — push local markdown back to Notion (`push`)
+- [ ] Push: block-level diffing (currently clear-and-replace content)
+- [ ] Push: stamp `notion_id` into new files for idempotent re-push
+- [ ] Conflict detection & resolution
 - [ ] Progress indicators
 - [ ] Configuration file support
 - [ ] Image downloading (optional)
-- [ ] Two-way sync (future)
 
 ## Contributing
 

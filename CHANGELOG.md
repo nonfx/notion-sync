@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Two-way sync (`push`)** - Push local markdown back up to Notion. Mirrors the
+  folder hierarchy as a Notion page hierarchy and re-creates internal `.md`
+  links between files as Notion page mentions. Works for round-trip (files with
+  a `notion_id` in frontmatter update their page in place) and brand-new folders
+  (pages created under a target parent page, recorded in the sync index).
+  - New CLI command: `notion-rsync push [parent-page-id]`.
+  - Markdown → Notion conversion: block parser (`markdown/parser.ts`), inline
+    rich-text parser (`markdown/inline.ts`), and frontmatter/body extraction
+    (`markdown/frontmatter.ts`).
+  - Local directory scanner (`local/scan.ts`) and reverse link resolution
+    (`local/links.ts`).
+  - Notion write client (`notion/writer.ts`) with batched appends; clearing a
+    page's content preserves child pages so subpages are never archived.
+
+### Notes
+
+- Content updates use clear-and-replace (no block-level diffing yet).
+- Brand-new files are not yet stamped with their `notion_id` after creation, so
+  re-pushing a brand-new folder without the generated index can create
+  duplicates. Round-trip pushes (with frontmatter ids) are idempotent.
+
 ## [0.1.5] - 2026-01-29
 
 ### Changed
