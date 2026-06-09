@@ -41,7 +41,15 @@ export async function writePageTree(
   usedFilenames.clear();
 
   // Second pass: write files with resolved links
-  await writePageRecursive(tree, options.outputDir, [], usedFilenames, results, linkMap, options.dryRun);
+  await writePageRecursive(
+    tree,
+    options.outputDir,
+    [],
+    usedFilenames,
+    results,
+    linkMap,
+    options.dryRun
+  );
 
   return results;
 }
@@ -141,7 +149,7 @@ async function writePageRecursive(
 
   // Convert to markdown
   const md = pageToMarkdown(page);
-  
+
   // Resolve notion:// links to local paths
   const relativePath = filePath.replace(baseDir + "/", "");
   const resolvedContent = resolveNotionLinks(md.content, relativePath, linkMap);

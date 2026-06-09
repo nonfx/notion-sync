@@ -7,13 +7,16 @@ import { richTextToMarkdown, richTextToPlain } from "../rich-text.ts";
 import type { RichText } from "../rich-text.ts";
 
 // Helper to create rich text items
-function text(content: string, options: {
-  bold?: boolean;
-  italic?: boolean;
-  strikethrough?: boolean;
-  code?: boolean;
-  link?: string;
-} = {}): RichText {
+function text(
+  content: string,
+  options: {
+    bold?: boolean;
+    italic?: boolean;
+    strikethrough?: boolean;
+    code?: boolean;
+    link?: string;
+  } = {}
+): RichText {
   return {
     type: "text",
     text: {
@@ -53,9 +56,9 @@ function pageMention(pageId: string, plainText: string): RichText {
 function userMention(plainText: string): RichText {
   return {
     type: "mention",
-    mention: { 
-      type: "user", 
-      user: { id: "user-1", object: "user" }
+    mention: {
+      type: "user",
+      user: { id: "user-1", object: "user" },
     },
     annotations: {
       bold: false,
@@ -73,9 +76,9 @@ function userMention(plainText: string): RichText {
 function dateMention(start: string, end: string | null, plainText: string): RichText {
   return {
     type: "mention",
-    mention: { 
-      type: "date", 
-      date: { start, end, time_zone: null } 
+    mention: {
+      type: "date",
+      date: { start, end, time_zone: null },
     },
     annotations: {
       bold: false,
@@ -120,10 +123,7 @@ describe("richTextToMarkdown", () => {
     });
 
     it("concatenates multiple text items", () => {
-      const result = richTextToMarkdown([
-        text("Hello, "),
-        text("world!"),
-      ]);
+      const result = richTextToMarkdown([text("Hello, "), text("world!")]);
       expect(result).toBe("Hello, world!");
     });
   });
@@ -150,26 +150,20 @@ describe("richTextToMarkdown", () => {
     });
 
     it("combines multiple annotations", () => {
-      const result = richTextToMarkdown([
-        text("bold and italic", { bold: true, italic: true }),
-      ]);
+      const result = richTextToMarkdown([text("bold and italic", { bold: true, italic: true })]);
       expect(result).toBe("***bold and italic***");
     });
 
     it("handles code with bold (code takes precedence)", () => {
       // Code is applied first, then bold wraps it
-      const result = richTextToMarkdown([
-        text("code", { code: true, bold: true }),
-      ]);
+      const result = richTextToMarkdown([text("code", { code: true, bold: true })]);
       expect(result).toBe("**`code`**");
     });
   });
 
   describe("links", () => {
     it("converts text with link", () => {
-      const result = richTextToMarkdown([
-        text("click here", { link: "https://example.com" }),
-      ]);
+      const result = richTextToMarkdown([text("click here", { link: "https://example.com" })]);
       expect(result).toBe("[click here](https://example.com)");
     });
 
@@ -183,23 +177,17 @@ describe("richTextToMarkdown", () => {
 
   describe("mentions", () => {
     it("converts page mention to notion:// URL", () => {
-      const result = richTextToMarkdown([
-        pageMention("abc123-def456", "Linked Page"),
-      ]);
+      const result = richTextToMarkdown([pageMention("abc123-def456", "Linked Page")]);
       expect(result).toBe("[Linked Page](notion://abc123-def456)");
     });
 
     it("converts user mention with @", () => {
-      const result = richTextToMarkdown([
-        userMention("John Doe"),
-      ]);
+      const result = richTextToMarkdown([userMention("John Doe")]);
       expect(result).toBe("@John Doe");
     });
 
     it("converts date mention (single date)", () => {
-      const result = richTextToMarkdown([
-        dateMention("2024-01-15", null, "January 15, 2024"),
-      ]);
+      const result = richTextToMarkdown([dateMention("2024-01-15", null, "January 15, 2024")]);
       expect(result).toBe("2024-01-15");
     });
 
@@ -227,20 +215,14 @@ describe("richTextToMarkdown", () => {
         text("more info", { italic: true }),
         text("."),
       ]);
-      expect(result).toBe(
-        "Check out [**this article**](https://example.com) for *more info*."
-      );
+      expect(result).toBe("Check out [**this article**](https://example.com) for *more info*.");
     });
   });
 });
 
 describe("richTextToPlain", () => {
   it("extracts plain text without formatting", () => {
-    const result = richTextToPlain([
-      text("Hello, "),
-      text("world", { bold: true }),
-      text("!"),
-    ]);
+    const result = richTextToPlain([text("Hello, "), text("world", { bold: true }), text("!")]);
     expect(result).toBe("Hello, world!");
   });
 

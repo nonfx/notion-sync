@@ -27,13 +27,16 @@ function createBlock<T extends NotionBlock["type"]>(
 }
 
 // Helper to create rich text
-function richText(text: string, options: {
-  bold?: boolean;
-  italic?: boolean;
-  strikethrough?: boolean;
-  code?: boolean;
-  link?: string;
-} = {}) {
+function richText(
+  text: string,
+  options: {
+    bold?: boolean;
+    italic?: boolean;
+    strikethrough?: boolean;
+    code?: boolean;
+    link?: string;
+  } = {}
+) {
   return {
     type: "text" as const,
     text: {
@@ -176,7 +179,7 @@ export const numberedListItems = [
   }),
   createBlock("numbered_list_item", {
     numbered_list_item: {
-      rich_text: [richText("Click \"New Audit\"")],
+      rich_text: [richText('Click "New Audit"')],
       color: "default",
     },
   }),
@@ -207,7 +210,7 @@ export const todoItems = [
 
 export const codeBlock = createBlock("code", {
   code: {
-    rich_text: [richText("function hello() {\n  console.log(\"Hello, world!\");\n}")],
+    rich_text: [richText('function hello() {\n  console.log("Hello, world!");\n}')],
     language: "typescript",
     caption: [],
   },
@@ -274,20 +277,12 @@ export const tableBlock = createBlock("table", {
   children: [
     createBlock("table_row", {
       table_row: {
-        cells: [
-          [richText("Header 1")],
-          [richText("Header 2")],
-          [richText("Header 3")],
-        ],
+        cells: [[richText("Header 1")], [richText("Header 2")], [richText("Header 3")]],
       },
     }),
     createBlock("table_row", {
       table_row: {
-        cells: [
-          [richText("Cell 1")],
-          [richText("Cell 2")],
-          [richText("Cell 3")],
-        ],
+        cells: [[richText("Cell 1")], [richText("Cell 2")], [richText("Cell 3")]],
       },
     }),
   ],

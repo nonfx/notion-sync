@@ -3,7 +3,12 @@
  */
 
 import type { PageNode, PropertyValue } from "../notion/tree.ts";
-import { blocksToMarkdown, type NotionBlock, type RenderContext, type DatabaseEntry } from "./blocks.ts";
+import {
+  blocksToMarkdown,
+  type NotionBlock,
+  type RenderContext,
+  type DatabaseEntry,
+} from "./blocks.ts";
 
 export interface PageMarkdown {
   /** Page title */
@@ -84,7 +89,7 @@ function buildRenderContext(page: PageNode): RenderContext {
         title: entry.title,
         properties: entry.properties || {},
       }));
-      
+
       // Store by both formats (with and without dashes)
       databases.set(child.id, entries);
       databases.set(child.id.replace(/-/g, ""), entries);
