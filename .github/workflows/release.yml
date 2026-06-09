@@ -64,8 +64,11 @@ jobs:
     name: Publish to npm
     needs: verify
     runs-on: ubuntu-latest
-    # Only publish for real version tags (not manual dispatch on a branch).
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish on a version tag, or on a manual run (workflow_dispatch) — the
+    # latter publishes whatever version is in package.json on the selected ref.
+    # NOTE: NPM_TOKEN must be an *Automation* (or Granular) token; a classic
+    # "Publish" token with 2FA enabled fails in CI with `EOTP` (needs an OTP).
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     environment:
       name: release
       url: https://www.npmjs.com/package/notion-rsync
@@ -93,7 +96,28 @@ jobs:
       - name: Build bundle
         run: bun run build
 
+      # Skip if this version is already on npm, so re-runs don't fail with
+      # EVERSION (e.g. after fixing a transient publish error).
+      - name: Check if already published
+        id: published
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>/tmp/npm_view.err; then
+            echo "$NAME@$VERSION is already on npm — skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "E404" /tmp/npm_view.err; then
+            # Genuinely not published yet — proceed.
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            # Auth/network/other error — fail closed rather than risk a bad publish.
+            echo "::error::npm view failed unexpectedly:"
+            cat /tmp/npm_view.err
+            exit 1
+          fi
+
       - name: Publish
+        if: steps.published.outputs.skip == 'false'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
