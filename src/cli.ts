@@ -9,6 +9,7 @@ import { parseArgs } from "util";
 import { version } from "../package.json";
 import { sync } from "./sync/engine.ts";
 import { partialSync } from "./sync/partial.ts";
+import { push } from "./sync/push.ts";
 import { init } from "./sync/init.ts";
 import { status } from "./sync/status.ts";
 import { log, setLogLevel } from "./utils/logger.ts";
@@ -23,7 +24,8 @@ USAGE:
 
 COMMANDS:
   init <page-id>    Initialize sync with a Notion page
-  sync              Sync Notion pages to local markdown
+  sync              Sync Notion pages to local markdown (pull)
+  push [page-id]    Push local markdown back up to Notion (create/update pages)
   status            Show sync status
 
 OPTIONS:
@@ -40,6 +42,8 @@ ENVIRONMENT:
 EXAMPLES:
   notion-rsync init abc123def456 --output ./docs
   notion-rsync sync
+  notion-rsync push                 # push using the configured root page
+  notion-rsync push abc123def456    # push a new folder under a target page
   notion-rsync status
 `;
 
@@ -141,6 +145,17 @@ async function main(): Promise<void> {
             dryRun: options.dryRun,
           });
         }
+        break;
+      }
+
+      case "push": {
+        const parentPageId = args[0]?.replace(/-/g, "");
+        await push({
+          outputDir: options.output,
+          notionToken: notionToken!,
+          parentPageId,
+          dryRun: options.dryRun,
+        });
         break;
       }
 

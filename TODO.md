@@ -87,16 +87,17 @@
 See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 
 ### Phase 2.1: Markdown to Notion Conversion
-- [ ] Implement markdown parser (remark-based)
-- [ ] Build AST → Notion blocks converter
-- [ ] Handle all block types from Stage 1
-- [ ] Test roundtrip conversion (Notion → MD → Notion)
+- [x] Implement markdown parser (hand-rolled, zero deps — `markdown/parser.ts`)
+- [x] Build markdown → Notion block-request converter
+- [x] Handle the block types Stage 1 emits + common hand-authored markdown
+- [x] Inline parser for rich text (`markdown/inline.ts`): bold/italic/strike/code/links/equations/mentions
+- [x] Frontmatter + body extraction (`markdown/frontmatter.ts`)
 
 ### Phase 2.2: Block Diffing & Updates
-- [ ] Assign stable IDs to markdown content
-- [ ] Map markdown sections to Notion block IDs
-- [ ] Implement block diff algorithm
-- [ ] Update/append/delete operations
+- [x] Notion write client (`notion/writer.ts`): create/setTitle/clearBlocks/appendBlocks
+- [x] Batch appends (100/req) and recursive append for deep nesting
+- [x] Preserve child_page/child_database on clear (don't archive subpages)
+- [ ] True block-level diffing (currently clear-and-replace content blocks)
 
 ### Phase 2.3: Change Detection
 - [ ] Checksum-based local change detection
@@ -110,9 +111,12 @@ See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 - [ ] Interactive conflict resolution CLI
 
 ### Phase 2.5: Bidirectional Sync Engine
-- [ ] Orchestrate complete two-way sync
+- [x] Local directory scanner → page tree (`local/scan.ts`)
+- [x] Reverse link resolution: relative `.md` links → page mentions (`local/links.ts`)
+- [x] Push engine (`sync/push.ts`): create/update pages, mirror folder hierarchy, resolve links
+- [x] `push` CLI command (round-trip via frontmatter ids, or brand-new under a target page)
+- [x] Update index after push
 - [ ] Atomic operations with rollback
-- [ ] Update index with bidirectional state
 
 ### Phase 2.6: Advanced Features
 - [ ] Selective sync (include/exclude patterns)
@@ -204,3 +208,23 @@ See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 14. **Rate limiting is real** - Notion API returns 429 errors with parallel requests. Reduce concurrency (5 → 2) and add retry with exponential backoff. The `Retry-After` header indicates how long to wait.
 
 15. **Inline databases need context** - When rendering `child_database` blocks, the block renderer doesn't have access to the database's entries. Solution: build a `RenderContext` from the page's children that maps database IDs to their entries, then pass it through the rendering pipeline. This allows inline databases to render as tables showing page titles and properties.
+
+### Stage 2 Learnings (Markdown → Notion / `push`)
+
+1. **Two-pass page creation** - Create all pages first (top-down so parents exist), then push content. Internal links resolve to page mentions only once every target page has an id, so content must come after the full hierarchy exists.
+
+2. **Never clear child_page blocks** - In Notion, subpages appear as `child_page` blocks in the parent. `clearBlocks` before re-pushing content MUST skip `child_page`/`child_database`, otherwise it archives the very subpages being synced. Big data-loss footgun.
+
+3. **Page mentions need existing pages** - Rich-text page mentions (`{ mention: { page: { id } } }`) require the referenced page to already exist. The two-pass approach guarantees this. Mentions are how we re-create internal links (symmetric with the reader emitting `notion://<id>`).
+
+4. **Reverse link resolution mirrors the forward pass** - Forward sync turns `notion://<id>` → relative `.md` paths; push does the inverse on the raw markdown string (relative `.md` → `notion://<id>`) before block parsing. Keeping it a string transform keeps it symmetric and simple.
+
+5. **`index.md` ⇄ directory page** - A directory's `index.md` is that directory's page; its siblings/subdirs are children. A root-level `index.md` roots the whole tree. Folders without an `index.md` get a synthesized page so they can still hold children.
+
+6. **Frontmatter `notion_id` drives update-vs-create** - Round-trip files carry `notion_id`; those pages are updated in place. Files without it (brand-new folders) are created under a target parent page. This makes "edit locally and push back" and "upload a fresh folder" the same code path.
+
+7. **Hand-rolled markdown parser over remark** - The project has zero runtime deps and bundles for npm. A line-based parser covering the constructs the reader emits (plus common GFM) keeps it dependency-free and round-trips reliably. The triple-marker `***bold italic***` case needs explicit handling before `**` to avoid mis-splitting.
+
+8. **Notion code `language` is an enum** - Unknown languages are rejected by the API. Normalize to the valid set and fall back to `plain text` (mapping common aliases like `ts`→`typescript`).
+
+9. **Injectable writer for testing** - The push engine takes a `NotionWriter` interface; tests use an in-memory fake to verify hierarchy, content, and link resolution with no network/token. The real impl wraps `@notionhq/client`.
