@@ -26,9 +26,11 @@ All notable changes to this project will be documented in this file.
     consulted by path, so idempotency holds even if frontmatter is removed.
 
 - **CI: release pipeline** - Added `.github/workflows/release.yml` to publish to
-  npm on `v*` tags. Re-runs lint/format/test/build, verifies the tag matches
-  `package.json`, publishes with npm provenance, and gates the publish step
-  behind a protected `release` environment.
+  npm on `v*` tags or a manual run. Re-runs lint/format/test/build, verifies the
+  tag matches `package.json`, skips if the version is already published, and
+  gates the publish step behind a protected `release` environment. Authenticates
+  via npm **Trusted Publishing (OIDC)** — no `NPM_TOKEN` secret — with automatic
+  provenance.
 
 ### Notes
 
