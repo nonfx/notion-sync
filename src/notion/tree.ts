@@ -26,8 +26,24 @@ export interface TreeBuildOptions {
   titlePath?: string[];
 }
 
-/** Max concurrent requests to avoid rate limiting */
-const CONCURRENCY = 2;
+/** Default max concurrent requests when config does not override */
+export const DEFAULT_TREE_CONCURRENCY = 2;
+
+let treeConcurrency = DEFAULT_TREE_CONCURRENCY;
+
+/**
+ * Set crawl concurrency for parallel tree/block fetches (config-driven runs).
+ */
+export function setTreeConcurrency(concurrency: number): void {
+  treeConcurrency = concurrency;
+}
+
+/**
+ * Reset crawl concurrency to the built-in default (single-root sync).
+ */
+export function resetTreeConcurrency(): void {
+  treeConcurrency = DEFAULT_TREE_CONCURRENCY;
+}
 
 /**
  * Run promises with limited concurrency
@@ -137,7 +153,7 @@ export async function buildDatabaseTree(
     ...childPages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
     ...allDbIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
   ];
-  const children = await runWithConcurrency(childPromises, CONCURRENCY);
+  const children = await runWithConcurrency(childPromises, treeConcurrency);
 
   return {
     id: database.id,
@@ -237,10 +253,12 @@ export async function buildPageTree(
   // Build child nodes in parallel (with concurrency limit)
   const childPromises = [
     ...childPages.map((p) => buildPageTree(client, p.id, depth + 1, maxDepth, childOptions)),
-    ...databaseIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
+    ...databaseIds.map((dbId) =>
+      buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)
+    ),
   ];
 
-  const children = await runWithConcurrency(childPromises, CONCURRENCY);
+  const children = await runWithConcurrency(childPromises, treeConcurrency);
 
   return {
     id: page.id,
@@ -274,7 +292,7 @@ export async function fetchAllBlocks(client: Client, tree: PageNode): Promise<Pa
 
   // Fetch children's blocks in parallel
   const childPromises = withBlocks.children.map((child) => fetchAllBlocks(client, child));
-  const childrenWithBlocks = await runWithConcurrency(childPromises, CONCURRENCY);
+  const childrenWithBlocks = await runWithConcurrency(childPromises, treeConcurrency);
 
   return {
     ...withBlocks,
@@ -301,7 +319,7 @@ export async function fetchBlocksFiltered(
   const childPromises = withBlocks.children.map((child) =>
     fetchBlocksFiltered(client, child, pageIds)
   );
-  const childrenWithBlocks = await runWithConcurrency(childPromises, CONCURRENCY);
+  const childrenWithBlocks = await runWithConcurrency(childPromises, treeConcurrency);
 
   return {
     ...withBlocks,

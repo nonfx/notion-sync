@@ -11,7 +11,15 @@ import {
   type ParsedSelector,
   type SourceConfig,
 } from "./schema.ts";
-import { createNotionClient, fetchPage, getPageTitle, withRetry } from "../notion/client.ts";
+import {
+  createNotionClient,
+  fetchPage,
+  getPageTitle,
+  setRetryAttempts,
+  withRetry,
+  DEFAULT_RETRY_ATTEMPTS,
+} from "../notion/client.ts";
+import { setTreeConcurrency, DEFAULT_TREE_CONCURRENCY } from "../notion/tree.ts";
 import { sync, type SyncOptions } from "../sync/engine.ts";
 import { log } from "../utils/logger.ts";
 
@@ -203,23 +211,36 @@ export async function loadConfig(
 }
 
 /**
+ * Apply global crawl settings from a resolved config before sync.
+ */
+export function applyResolvedGlobals(resolved: ResolvedConfig): void {
+  setTreeConcurrency(resolved.concurrency ?? DEFAULT_TREE_CONCURRENCY);
+  setRetryAttempts(resolved.retry?.attempts ?? DEFAULT_RETRY_ATTEMPTS);
+}
+
+/**
+ * Format a selector list for dry-run output.
+ */
+function formatSelectorList(selectors: ParsedSelector[]): string {
+  return selectors.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ");
+}
+
+/**
  * Format a resolved config plan for dry-run output.
  */
 export function formatResolvedPlan(resolved: ResolvedConfig): string {
-  const lines: string[] = [`Config: ${resolved.configPath}`, `Output root: ${resolved.output}`];
+  const concurrency = resolved.concurrency ?? DEFAULT_TREE_CONCURRENCY;
+  const retryAttempts = resolved.retry?.attempts ?? DEFAULT_RETRY_ATTEMPTS;
 
-  if (resolved.concurrency !== undefined) {
-    lines.push(`Concurrency: ${resolved.concurrency}`);
-  }
-
-  if (resolved.retry !== undefined) {
-    lines.push(`Retry attempts: ${resolved.retry.attempts}`);
-  }
+  const lines: string[] = [
+    `Config: ${resolved.configPath}`,
+    `Output root: ${resolved.output}`,
+    `Concurrency: ${concurrency}`,
+    `Retry attempts: ${retryAttempts}`,
+  ];
 
   if (resolved.defaultExclude.length > 0) {
-    lines.push(
-      `Default exclude: ${resolved.defaultExclude.map((selector) => selector.raw).join(", ")}`
-    );
+    lines.push(`Default exclude: ${formatSelectorList(resolved.defaultExclude)}`);
   }
 
   lines.push("", "Sources:");
@@ -229,21 +250,12 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
     lines.push(`    output: ${source.outputDir}`);
 
     if (source.selectors.include.length > 0) {
-      lines.push(
-        `    include: ${source.selectors.include.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
-      );
+      lines.push(`    effective include: ${formatSelectorList(source.selectors.include)}`);
     }
 
-    if (source.selectors.exclude.length > 0) {
-      lines.push(
-        `    exclude: ${source.selectors.exclude.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
-      );
-    }
-
-    if (source.selectors.defaultExclude.length > 0) {
-      lines.push(
-        `    defaultExclude: ${source.selectors.defaultExclude.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
-      );
+    const effectiveExclude = [...source.selectors.exclude, ...source.selectors.defaultExclude];
+    if (effectiveExclude.length > 0) {
+      lines.push(`    effective exclude: ${formatSelectorList(effectiveExclude)}`);
     }
 
     if (source.maxDepth !== undefined) {
@@ -261,6 +273,7 @@ export async function syncResolvedSources(
   resolved: ResolvedConfig,
   options: Pick<ConfigSyncOptions, "notionToken" | "dryRun" | "syncSource">
 ): Promise<void> {
+  applyResolvedGlobals(resolved);
   const runSync = options.syncSource ?? sync;
 
   for (const source of resolved.sources) {
