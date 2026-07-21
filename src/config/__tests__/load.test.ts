@@ -80,6 +80,8 @@ describe("resolveConfig", () => {
     expect(resolved.sources[1]?.name).toBe("Sync2Hire");
     expect(resolved.sources[0]?.selectors.exclude).toEqual([
       classifySelector("9ded838dec5c451498cc03000357ca50"),
+    ]);
+    expect(resolved.sources[0]?.selectors.defaultExclude).toEqual([
       classifySelector("**/Archive/**"),
     ]);
   });
@@ -139,10 +141,8 @@ describe("computeEffectiveSelectors", () => {
     );
 
     expect(selectors.include).toEqual([]);
-    expect(selectors.exclude.map((selector) => selector.raw)).toEqual([
-      "**/Private/**",
-      "**/Archive/**",
-    ]);
+    expect(selectors.exclude.map((selector) => selector.raw)).toEqual(["**/Private/**"]);
+    expect(selectors.defaultExclude.map((selector) => selector.raw)).toEqual(["**/Archive/**"]);
   });
 });
 

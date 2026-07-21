@@ -5,6 +5,7 @@
 import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../utils/logger.ts";
+import type { EffectiveSelectors } from "../config/load.ts";
 import { createNotionClient } from "../notion/client.ts";
 import { buildTree, fetchAllBlocks, countPages } from "../notion/tree.ts";
 import { writePageTree } from "../markdown/writer.ts";
@@ -23,6 +24,9 @@ export interface SyncOptions {
   dryRun: boolean;
   /** Auto-create index when missing (config-driven multi-source sync). */
   rootPageId?: string;
+  /** Per-source include/exclude selectors for build-time pruning. */
+  selectors?: EffectiveSelectors;
+  maxDepth?: number;
 }
 
 /**
@@ -94,7 +98,9 @@ export async function sync(options: SyncOptions): Promise<void> {
 
   // 3. Build page tree
   log.info("Building page tree...");
-  const tree = await buildTree(client, index.rootPageId);
+  const treeOptions =
+    options.selectors !== undefined ? { selectors: options.selectors } : {};
+  const tree = await buildTree(client, index.rootPageId, options.maxDepth ?? 10, treeOptions);
   const pageCount = countPages(tree);
   log.info(`Found ${pageCount} pages`);
 

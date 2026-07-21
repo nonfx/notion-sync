@@ -17,10 +17,11 @@ import { log } from "../utils/logger.ts";
 
 export const DEFAULT_CONFIG_FILENAME = "notion-rsync.config.json";
 
-/** Resolved selector set for one source after merging defaults */
+/** Resolved selector set for one source with defaults kept separate for precedence */
 export interface EffectiveSelectors {
   include: ParsedSelector[];
   exclude: ParsedSelector[];
+  defaultExclude: ParsedSelector[];
 }
 
 /** A source after id/name resolution and selector computation */
@@ -115,10 +116,11 @@ export function computeEffectiveSelectors(
   source: SourceConfig,
   defaultExclude: ParsedSelector[]
 ): EffectiveSelectors {
-  const include = (source.include ?? []).map(classifySelector);
-  const exclude = [...(source.exclude ?? []).map(classifySelector), ...defaultExclude];
-
-  return { include, exclude };
+  return {
+    include: (source.include ?? []).map(classifySelector),
+    exclude: (source.exclude ?? []).map(classifySelector),
+    defaultExclude,
+  };
 }
 
 function createDefaultTitleResolver(client: Client): PageTitleResolver {
@@ -238,6 +240,12 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
       );
     }
 
+    if (source.selectors.defaultExclude.length > 0) {
+      lines.push(
+        `    defaultExclude: ${source.selectors.defaultExclude.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
+      );
+    }
+
     if (source.maxDepth !== undefined) {
       lines.push(`    maxDepth: ${source.maxDepth}`);
     }
@@ -262,6 +270,8 @@ export async function syncResolvedSources(
       notionToken: options.notionToken,
       dryRun: options.dryRun,
       rootPageId: source.id,
+      selectors: source.selectors,
+      ...(source.maxDepth !== undefined ? { maxDepth: source.maxDepth } : {}),
     });
   }
 }

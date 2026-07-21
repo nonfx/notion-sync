@@ -17,6 +17,14 @@ import {
   type PropertyValue,
 } from "./client.ts";
 import { log } from "../utils/logger.ts";
+import type { EffectiveSelectors } from "../config/load.ts";
+import { shouldPruneNode } from "../config/selector.ts";
+
+/** Options passed through recursive tree building */
+export interface TreeBuildOptions {
+  selectors?: EffectiveSelectors;
+  titlePath?: string[];
+}
 
 /** Max concurrent requests to avoid rate limiting */
 const CONCURRENCY = 2;
@@ -60,15 +68,20 @@ export interface PageNode {
 /**
  * Build a tree starting from a root ID (auto-detects page vs database)
  */
-export async function buildTree(client: Client, rootId: string, maxDepth = 10): Promise<PageNode> {
+export async function buildTree(
+  client: Client,
+  rootId: string,
+  maxDepth = 10,
+  options: TreeBuildOptions = {}
+): Promise<PageNode> {
   // Try fetching as a page first, fall back to database
   try {
-    return await buildPageTree(client, rootId, 0, maxDepth);
+    return await buildPageTree(client, rootId, 0, maxDepth, options);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("is a database")) {
       log.info("Root is a database, fetching entries...");
-      return await buildDatabaseTree(client, rootId, maxDepth);
+      return await buildDatabaseTree(client, rootId, maxDepth, 0, options);
     }
     throw err;
   }
@@ -81,12 +94,27 @@ export async function buildDatabaseTree(
   client: Client,
   databaseId: string,
   maxDepth = 10,
-  depth = 0
+  depth = 0,
+  options: TreeBuildOptions = {}
 ): Promise<PageNode> {
   const database = await fetchDatabase(client, databaseId);
   const title = getDatabaseTitle(database);
+  const titlePath = [...(options.titlePath ?? []), title];
 
   log.info(`${"  ".repeat(depth)}Found database: ${title}`);
+
+  const selectors = options.selectors;
+  if (selectors && shouldPruneNode({ id: database.id, titlePath }, selectors)) {
+    log.debug(`${"  ".repeat(depth)}Pruned database subtree: ${title}`);
+    return {
+      id: database.id,
+      title,
+      lastEditedTime: database.last_edited_time,
+      children: [],
+      blocks: null,
+      isDatabase: true,
+    };
+  }
 
   // Fetch database entries (pages)
   const pages = await fetchDatabasePages(client, databaseId);
@@ -98,11 +126,16 @@ export async function buildDatabaseTree(
   const nestedDbIds = await findNestedDatabases(client, databaseId);
   const allDbIds = [...new Set([...childDbIds, ...nestedDbIds])];
 
+  const childOptions: TreeBuildOptions = {
+    ...options,
+    titlePath,
+  };
+
   // Build child nodes in parallel
   const childPromises = [
-    ...pages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth)),
-    ...childPages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth)),
-    ...allDbIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1)),
+    ...pages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
+    ...childPages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
+    ...allDbIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
   ];
   const children = await runWithConcurrency(childPromises, CONCURRENCY);
 
@@ -160,7 +193,8 @@ export async function buildPageTree(
   client: Client,
   rootPageId: string,
   depth = 0,
-  maxDepth = 10
+  maxDepth = 10,
+  options: TreeBuildOptions = {}
 ): Promise<PageNode> {
   if (depth > maxDepth) {
     log.warn(`Max depth (${maxDepth}) reached, stopping recursion`);
@@ -176,15 +210,34 @@ export async function buildPageTree(
   const page = await fetchPage(client, rootPageId);
   const title = getPageTitle(page);
   const properties = getPageProperties(page);
+  const titlePath = [...(options.titlePath ?? []), title];
 
   log.info(`${"  ".repeat(depth)}Found page: ${title}`);
 
+  const selectors = options.selectors;
+  if (selectors && shouldPruneNode({ id: page.id, titlePath }, selectors)) {
+    log.debug(`${"  ".repeat(depth)}Pruned page subtree: ${title}`);
+    return {
+      id: page.id,
+      title,
+      lastEditedTime: page.last_edited_time,
+      children: [],
+      blocks: null,
+      properties: Object.keys(properties).length > 0 ? properties : undefined,
+    };
+  }
+
   const { pages: childPages, databaseIds } = await fetchChildren(client, rootPageId);
+
+  const childOptions: TreeBuildOptions = {
+    ...options,
+    titlePath,
+  };
 
   // Build child nodes in parallel (with concurrency limit)
   const childPromises = [
-    ...childPages.map((p) => buildPageTree(client, p.id, depth + 1, maxDepth)),
-    ...databaseIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1)),
+    ...childPages.map((p) => buildPageTree(client, p.id, depth + 1, maxDepth, childOptions)),
+    ...databaseIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
   ];
 
   const children = await runWithConcurrency(childPromises, CONCURRENCY);
