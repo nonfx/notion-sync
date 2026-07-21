@@ -7,6 +7,7 @@
 
 import { parseArgs } from "util";
 import { version } from "../package.json";
+import { syncFromConfig } from "./config/load.ts";
 import { sync } from "./sync/engine.ts";
 import { partialSync } from "./sync/partial.ts";
 import { push } from "./sync/push.ts";
@@ -33,6 +34,7 @@ OPTIONS:
   -p, --pages <ids>     Sync only specific page IDs (comma-separated)
   -v, --verbose         Enable verbose logging
   -n, --dry-run         Show what would be synced without making changes
+      --config <path>   Config file for multi-source sync (default: ./notion-rsync.config.json)
   -h, --help            Show this help message
   --version             Show version
 
@@ -42,6 +44,7 @@ ENVIRONMENT:
 EXAMPLES:
   notion-rsync init abc123def456 --output ./docs
   notion-rsync sync
+  notion-rsync sync --config notion-rsync.config.json -n
   notion-rsync push                 # push using the configured root page
   notion-rsync push abc123def456    # push a new folder under a target page
   notion-rsync status
@@ -54,6 +57,7 @@ interface CLIOptions {
   help: boolean;
   version: boolean;
   pages: string | undefined;
+  config: string | undefined;
 }
 
 function parseArguments(): { command: string; args: string[]; options: CLIOptions } {
@@ -64,6 +68,7 @@ function parseArguments(): { command: string; args: string[]; options: CLIOption
       verbose: { type: "boolean", short: "v", default: false },
       "dry-run": { type: "boolean", short: "n", default: false },
       pages: { type: "string", short: "p" },
+      config: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", default: false },
     },
@@ -78,6 +83,7 @@ function parseArguments(): { command: string; args: string[]; options: CLIOption
       verbose: values.verbose ?? false,
       dryRun: values["dry-run"] ?? false,
       pages: values.pages,
+      config: values.config,
       help: values.help ?? false,
       version: values.version ?? false,
     },
@@ -130,6 +136,15 @@ async function main(): Promise<void> {
       }
 
       case "sync": {
+        if (options.config) {
+          await syncFromConfig({
+            configPath: options.config,
+            notionToken: notionToken!,
+            dryRun: options.dryRun,
+          });
+          break;
+        }
+
         if (options.pages) {
           const pageIds = options.pages.split(",").map((id) => id.trim().replace(/-/g, ""));
           await partialSync({
