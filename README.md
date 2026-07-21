@@ -166,8 +166,11 @@ notion-rsync sync --output ./docs [--dry-run]
 
 Options:
 - `--output, -o` - Output directory (default: ./docs)
+- `--config` - Path to config file for multi-source sync (default: `./notion-rsync.config.json` in cwd)
 - `--dry-run, -n` - Preview changes without writing files
 - `--verbose, -v` - Enable verbose logging
+
+With a config file, `sync` pulls each declared Notion root into its own subdirectory under the global `output` path. See [Configuration file](#configuration-file) below.
 
 ### `push [page-id]`
 
@@ -201,6 +204,88 @@ Show sync status and configuration.
 
 ```bash
 notion-rsync status --output ./docs
+```
+
+## Configuration file
+
+Use `notion-rsync.config.json` when you need multiple Notion roots in one run, or when you want to include/exclude subtrees without crawling the whole workspace. The config file is separate from `.notion-rsync/index.json` (tool-managed sync state).
+
+Copy the example and edit IDs/paths for your workspace:
+
+```bash
+cp notion-rsync.config.example.json notion-rsync.config.json
+notion-rsync sync --config notion-rsync.config.json --dry-run
+notion-rsync sync --config notion-rsync.config.json
+```
+
+Single-root `init` / `sync --output` still works; config-driven sync is an alternate entry point.
+
+### Schema
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `output` | No | Global output root (default: `./docs`) |
+| `concurrency` | No | Parallel Notion API requests during tree build (default: `2`) |
+| `retry.attempts` | No | Max retry attempts on rate limits (default: `5`) |
+| `defaultExclude` | No | Glob selectors applied to every source's exclude set |
+| `sources` | Yes | Non-empty array of Notion roots to pull |
+
+Each `sources[]` entry:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | 32-character hex Notion page or database id |
+| `name` | No | Doc alias; validated against the page title at load time |
+| `output` | Yes | Subdirectory under global `output` for this source |
+| `include` | No | Selectors for subtrees to keep |
+| `exclude` | No | Selectors for subtrees to drop |
+| `maxDepth` | No | Max recursion depth for this source (default: `10`) |
+
+Each source gets its own `.notion-rsync/index.json` under its output subdirectory.
+
+### Selectors
+
+A selector is either:
+
+- **Notion id** — 32 hex characters (dashes optional), e.g. `9ded838dec5c451498cc03000357ca50`
+- **Title-path glob** — matched against the path from the source root, e.g. `Sync2Hire/Archive/Old Note` matches `**/Archive/**`
+
+Precedence per node: explicit `include` id > explicit `exclude` id > `include` glob > `exclude` glob > `defaultExclude` glob > include by default.
+
+Exclusion is applied during tree build (before child pages are fetched), so excluded subtrees are not crawled. That differs from `--pages`, which still builds the full tree and only limits which pages get their blocks written.
+
+If an excluded parent contains an explicitly included descendant (by id or glob), the engine walks into the parent only far enough to reach the included branch.
+
+### Example
+
+See [`notion-rsync.config.example.json`](notion-rsync.config.example.json):
+
+```json
+{
+  "output": "./notion-export",
+  "concurrency": 2,
+  "retry": { "attempts": 6 },
+  "defaultExclude": ["**/Archive/**"],
+  "sources": [
+    {
+      "id": "d95e4b1bba544a1794a68c9005e4fa0a",
+      "name": "Professional TODOs",
+      "output": "professional-todos"
+    },
+    {
+      "id": "2df24584254b804094d3dfb56506b0be",
+      "name": "Sync2Hire",
+      "output": "sync2hire",
+      "exclude": ["**/Archive/**", "9ded838dec5c451498cc03000357ca50"]
+    }
+  ]
+}
+```
+
+Dry-run prints the resolved plan (output paths, effective include/exclude, concurrency, retry):
+
+```bash
+notion-rsync sync --config notion-rsync.config.json -n
 ```
 
 ## Environment Variables
@@ -275,7 +360,7 @@ bun run format
 - [ ] Push: block-level diffing (currently clear-and-replace content)
 - [ ] Conflict detection & resolution
 - [ ] Progress indicators
-- [ ] Configuration file support
+- [x] Configuration file support (multi-root sync, include/exclude selectors)
 - [ ] Image downloading (optional)
 
 ## Contributing

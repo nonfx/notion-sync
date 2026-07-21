@@ -119,7 +119,7 @@ See [PLAN-STAGE-2.md](./PLAN-STAGE-2.md) for full details.
 - [ ] Atomic operations with rollback
 
 ### Phase 2.6: Advanced Features
-- [ ] Selective sync (include/exclude patterns)
+- [x] Selective sync (include/exclude patterns)
 - [ ] Sync history and rollback
 - [ ] Backup before sync
 - [ ] Watch mode (real-time sync)

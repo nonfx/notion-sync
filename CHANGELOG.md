@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Config file + selective sync** - Declarative multi-root pulls via
+  `notion-rsync.config.json` and `notion-rsync sync --config <path>`.
+  - `sources[]`: each Notion root syncs into its own subdirectory under a
+    global `output` path, with an independent `.notion-rsync/index.json`.
+  - Per-source `include` / `exclude` selectors accept either a 32-hex Notion id
+    or a title-path glob (e.g. `**/Archive/**`). `defaultExclude` globs apply
+    workspace-wide.
+  - Selectors prune during tree build (before child fetch), so excluded subtrees
+    are not crawled. Include-override walks into an excluded parent when a
+    descendant is explicitly included.
+  - Global `concurrency` and `retry.attempts` tune crawl parallelism and rate-limit
+    retries. Dry-run (`-n`) prints the resolved plan per source.
+  - Example config: `notion-rsync.config.example.json`.
+
 - **Two-way sync (`push`)** - Push local markdown back up to Notion. Mirrors the
   folder hierarchy as a Notion page hierarchy and re-creates internal `.md`
   links between files as Notion page mentions. Works for round-trip (files with
