@@ -9,6 +9,7 @@ import {
   computePendingIncludeIds,
   globCouldMatchDescendant,
   matchGlob,
+  resolveDateDecision,
   resolveNodeDecision,
   shouldPruneNode,
   shouldTraverseExcludedNode,
@@ -245,5 +246,53 @@ describe("include-override traversal", () => {
   it("computePendingIncludeIds returns undefined when there are no include ids", () => {
     expect(computePendingIncludeIds(selectors({ exclude: [classifySelector("**/Archive/**")] }))).toBeUndefined();
     expect(computePendingIncludeIds(undefined)).toBeUndefined();
+  });
+});
+
+describe("resolveDateDecision", () => {
+  it("includes when no dateFilter is configured", () => {
+    expect(resolveDateDecision("2026-03-15T12:00:00.000Z")).toBe("include");
+    expect(resolveDateDecision("2026-03-15T12:00:00.000Z", undefined)).toBe("include");
+  });
+
+  it("excludes timestamps before after bound", () => {
+    expect(
+      resolveDateDecision("2025-12-31T23:59:59.999Z", { after: "2026-01-01" })
+    ).toBe("exclude");
+    expect(resolveDateDecision("2026-01-01T00:00:00.000Z", { after: "2026-01-01" })).toBe(
+      "include"
+    );
+    expect(resolveDateDecision("2026-06-15T00:00:00.000Z", { after: "2026-01-01" })).toBe(
+      "include"
+    );
+  });
+
+  it("excludes timestamps after before bound", () => {
+    expect(resolveDateDecision("2026-07-01T00:00:00.000Z", { before: "2026-06-30" })).toBe(
+      "exclude"
+    );
+    expect(resolveDateDecision("2026-06-30T23:59:59.999Z", { before: "2026-06-30" })).toBe(
+      "include"
+    );
+    expect(resolveDateDecision("2026-06-15T00:00:00.000Z", { before: "2026-06-30" })).toBe(
+      "include"
+    );
+  });
+
+  it("applies both after and before as an inclusive range", () => {
+    const filter = { after: "2026-01-01", before: "2026-06-30" };
+
+    expect(resolveDateDecision("2025-06-01T00:00:00.000Z", filter)).toBe("exclude");
+    expect(resolveDateDecision("2026-03-15T12:00:00.000Z", filter)).toBe("include");
+    expect(resolveDateDecision("2026-07-01T00:00:00.000Z", filter)).toBe("exclude");
+  });
+
+  it("includes timestamps exactly on after and before boundaries", () => {
+    expect(
+      resolveDateDecision("2026-01-01T00:00:00.000Z", { after: "2026-01-01", before: "2026-06-30" })
+    ).toBe("include");
+    expect(
+      resolveDateDecision("2026-06-30T23:59:59.999Z", { after: "2026-01-01", before: "2026-06-30" })
+    ).toBe("include");
   });
 });

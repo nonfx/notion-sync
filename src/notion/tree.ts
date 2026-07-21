@@ -22,6 +22,7 @@ import { normalizeNotionId } from "../config/schema.ts";
 import type { EffectiveSelectors } from "../config/load.ts";
 import {
   computePendingIncludeIds,
+  resolveDateDecision,
   resolveNodeDecision,
   shouldTraverseExcludedNode,
 } from "../config/selector.ts";
@@ -85,6 +86,26 @@ function resolvePruneResult(
     pruneChildren: false,
     childOptions: { ...childOptions, ancestorExcluded: true },
   };
+}
+
+/**
+ * OR date-filter exclusion into selector prune result without affecting pruneChildren.
+ */
+function applyDateExclusion(
+  lastEditedTime: string,
+  pruneResult: NodePruneResult,
+  selectors?: EffectiveSelectors
+): NodePruneResult {
+  if (!selectors?.dateFilter) {
+    return pruneResult;
+  }
+
+  const dateExcluded = resolveDateDecision(lastEditedTime, selectors.dateFilter) === "exclude";
+  if (!dateExcluded) {
+    return pruneResult;
+  }
+
+  return { ...pruneResult, excluded: true };
 }
 
 /** Default max concurrent requests when config does not override */
@@ -200,7 +221,12 @@ export async function buildDatabaseTree(
 
   log.info(`${"  ".repeat(depth)}Found database: ${title}`);
 
-  const { excluded, pruneChildren, childOptions } = resolvePruneResult(database.id, titlePath, options);
+  const pruneResult = resolvePruneResult(database.id, titlePath, options);
+  const { excluded, pruneChildren, childOptions } = applyDateExclusion(
+    database.last_edited_time,
+    pruneResult,
+    options.selectors
+  );
   if (pruneChildren) {
     log.debug(`${"  ".repeat(depth)}Pruned database subtree: ${title}`);
     return {
@@ -310,7 +336,12 @@ export async function buildPageTree(
 
   log.info(`${"  ".repeat(depth)}Found page: ${title}`);
 
-  const { excluded, pruneChildren, childOptions } = resolvePruneResult(page.id, titlePath, options);
+  const pruneResult = resolvePruneResult(page.id, titlePath, options);
+  const { excluded, pruneChildren, childOptions } = applyDateExclusion(
+    page.last_edited_time,
+    pruneResult,
+    options.selectors
+  );
   if (pruneChildren) {
     log.debug(`${"  ".repeat(depth)}Pruned page subtree: ${title}`);
     return {

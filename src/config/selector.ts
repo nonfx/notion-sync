@@ -2,7 +2,7 @@
  * Selector matching with precedence and include-override traversal hints.
  */
 
-import { normalizeNotionId, type ParsedSelector } from "./schema.ts";
+import { normalizeNotionId, type DateFilterConfig, type ParsedSelector } from "./schema.ts";
 import type { EffectiveSelectors } from "./load.ts";
 
 /** Node metadata available before child fetch during tree build */
@@ -166,6 +166,40 @@ export function resolveNodeDecision(
   }
 
   return ancestorExcluded ? "exclude" : "include";
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Inclusive calendar-day bound for `before` (end of the configured date, UTC).
+ */
+function beforeBoundMs(before: string): number {
+  return Date.parse(before) + MS_PER_DAY - 1;
+}
+
+/**
+ * Apply effective dateFilter to a node's last_edited_time.
+ * No filter or in-range timestamps return "include"; out-of-range return "exclude".
+ */
+export function resolveDateDecision(
+  lastEditedTime: string,
+  dateFilter?: DateFilterConfig
+): SelectorDecision {
+  if (!dateFilter) {
+    return "include";
+  }
+
+  const editedMs = Date.parse(lastEditedTime);
+
+  if (dateFilter.after !== undefined && editedMs < Date.parse(dateFilter.after)) {
+    return "exclude";
+  }
+
+  if (dateFilter.before !== undefined && editedMs > beforeBoundMs(dateFilter.before)) {
+    return "exclude";
+  }
+
+  return "include";
 }
 
 /**
