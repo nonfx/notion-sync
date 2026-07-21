@@ -60,7 +60,7 @@ describe("validateConfig", () => {
     expect(() =>
       validateConfig({
         sources: [{ id: "not-a-real-id", output: "x" }],
-      }),
+      })
     ).toThrow("sources[0].id must be a 32-character hex Notion id");
   });
 
@@ -68,7 +68,7 @@ describe("validateConfig", () => {
     expect(() =>
       validateConfig({
         sources: [{ id: "d95e4b1bba544a1794a68c9005e4fa0a", output: "  " }],
-      }),
+      })
     ).toThrow("sources[0].output must be a non-empty string");
   });
 
@@ -77,7 +77,7 @@ describe("validateConfig", () => {
       validateConfig({
         sources: [{ id: "d95e4b1bba544a1794a68c9005e4fa0a", output: "x" }],
         retry: { attempts: 0 },
-      }),
+      })
     ).toThrow("retry.attempts must be a positive integer");
   });
 
@@ -124,14 +124,14 @@ describe("validateConfig", () => {
             dateFilter: { after: "not-a-date" },
           },
         ],
-      }),
+      })
     ).toThrow("sources[0].dateFilter.after must be a valid ISO-8601 date string");
 
     expect(() =>
       validateConfig({
         defaultDateFilter: { before: "yesterday-ish" },
         sources: [{ id: "d95e4b1bba544a1794a68c9005e4fa0a", output: "x" }],
-      }),
+      })
     ).toThrow("defaultDateFilter.before must be a valid ISO-8601 date string");
   });
 
@@ -145,7 +145,7 @@ describe("validateConfig", () => {
             dateFilter: { after: "2026-06-01", before: "2026-01-01" },
           },
         ],
-      }),
+      })
     ).toThrow("sources[0].dateFilter.after must not be later than sources[0].dateFilter.before");
   });
 });
@@ -153,7 +153,7 @@ describe("validateConfig", () => {
 describe("selector helpers", () => {
   it("normalizes notion ids", () => {
     expect(normalizeNotionId("D95E4B1B-BA54-4A17-94A6-8C9005E4FA0A")).toBe(
-      "d95e4b1bba544a1794a68c9005e4fa0a",
+      "d95e4b1bba544a1794a68c9005e4fa0a"
     );
     expect(isNotionId("d95e4b1bba544a1794a68c9005e4fa0a")).toBe(true);
     expect(isNotionId("**/Archive/**")).toBe(false);

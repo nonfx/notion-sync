@@ -1,6 +1,6 @@
 # Config File + Selective Sync Plan
 
-**Status:** 🟡 Planned — design locked, no code yet
+**Status:** 🟢 Implemented (config file + selectors + date filtering)
 **Last updated:** Jul 21, 2026
 **Fork:** `crimsonsunset/notion-rsync` (parent `nonfx/notion-sync`), branch TBD off `master` (v0.2.0)
 **Scope:** Add a user-facing config file that declares multiple Notion roots and per-root include/exclude selectors (by ID or title glob), with pruning applied at tree-build time so excluded subtrees are never crawled. Targets upstream `TODO.md` Phase 2.6 ("Selective sync (include/exclude patterns)"), currently unchecked.
@@ -63,7 +63,7 @@ upstream PR against TODO.md Phase 2.6; fork installable on Rivendell
 
 ### In scope
 
-- `notion-rsync.config.json` schema: global block (`output`, `concurrency`, `retry`, `defaultExclude`) + `sources[]` (`id`, `name?`, `output`, `include?`, `exclude?`, `maxDepth?`)
+- `notion-rsync.config.json` schema: global block (`output`, `concurrency`, `retry`, `defaultExclude`, `defaultDateFilter`) + `sources[]` (`id`, `name?`, `output`, `include?`, `exclude?`, `maxDepth?`, `dateFilter?`)
 - Config discovery (cwd default) and explicit `--config <path>` flag
 - Loader with validation and `name` → ID resolution at load time
 - Multi-source orchestration: run the existing pull per source into its own subdir under the global `output`
@@ -94,6 +94,7 @@ upstream PR against TODO.md Phase 2.6; fork installable on Rivendell
   "concurrency": 2,                // maps to tree.ts CONCURRENCY
   "retry": { "attempts": 6 },      // maps to withRetry
   "defaultExclude": ["**/Archive/**"],
+  "defaultDateFilter": { "after": "2025-01-01" },
   "sources": [
     {
       "id": "d95e4b1bba544a1794a68c9005e4fa0a",
@@ -107,11 +108,42 @@ upstream PR against TODO.md Phase 2.6; fork installable on Rivendell
       "exclude": [
         "**/Archive/**",                        // glob on title-path
         "9ded838dec5c451498cc03000357ca50"      // or a raw id
-      ]
+      ],
+      "dateFilter": { "after": "2026-01-01" }  // per-source date range (see below)
     }
   ]
 }
 ```
+
+### Date filtering (`dateFilter` / `defaultDateFilter`)
+
+A second scoping axis alongside `include`/`exclude`: pages are filtered by `last_edited_time` after the node is fetched. ISO-8601 date strings only (e.g. `"2026-01-01"`, `"2026-01-01T00:00:00.000Z"`).
+
+| Field | Scope | Description |
+|---|---|---|
+| `defaultDateFilter` | Global | Applied to every source; intersects with per-source bounds |
+| `sources[].dateFilter` | Per-source | Optional `after` and/or `before` bounds on `last_edited_time` |
+
+**Intersection semantics:** When both global and per-source bounds are set, the effective range is the intersection — the later `after` wins, the earlier `before` wins. Mirrors `defaultExclude` additive narrowing rather than override.
+
+**Bounds:**
+
+- `after` — exclude pages edited strictly before this timestamp (inclusive at the parsed instant)
+- `before` — exclude pages edited after the end of the configured calendar day (UTC)
+
+**Unlike ID/glob exclude, date exclude never prunes child fetches.** A parent edited long ago may still have children edited yesterday; those children are fetched and evaluated on their own `last_edited_time`. Date exclusion ORs into the same `excluded` flag used by selectors, so `writer.ts` and stale cleanup behave identically: a childless date-excluded page produces no file and falls out of the index on the next run.
+
+Dry-run prints the effective date range per source after intersection:
+
+```bash
+notion-rsync sync --config notion-rsync.config.json -n
+# ...
+#   Default dateFilter: after 2025-01-01
+#   source "Sync2Hire" → ./notion-export/sync2hire
+#     effective dateFilter: after 2026-01-01
+```
+
+Validation rejects malformed date strings and configs where `after` is later than `before`.
 
 ### Selector resolution
 

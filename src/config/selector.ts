@@ -291,6 +291,8 @@ export function computePendingIncludeIds(selectors?: EffectiveSelectors): Set<st
     return undefined;
   }
 
-  const ids = selectors.include.filter((selector) => selector.kind === "id").map((selector) => selector.id!);
+  const ids = selectors.include
+    .filter((selector) => selector.kind === "id")
+    .map((selector) => selector.id!);
   return ids.length > 0 ? new Set(ids) : undefined;
 }

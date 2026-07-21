@@ -98,8 +98,7 @@ export async function sync(options: SyncOptions): Promise<void> {
 
   // 3. Build page tree
   log.info("Building page tree...");
-  const treeOptions =
-    options.selectors !== undefined ? { selectors: options.selectors } : {};
+  const treeOptions = options.selectors !== undefined ? { selectors: options.selectors } : {};
   const tree = await buildTree(client, index.rootPageId, options.maxDepth ?? 10, treeOptions);
   const pageCount = countPages(tree);
   log.info(`Found ${pageCount} pages`);

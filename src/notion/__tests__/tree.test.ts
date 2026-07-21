@@ -46,7 +46,10 @@ const fetchPageMock = mock(async (_client: Client, pageId: string): Promise<Mock
 });
 
 const fetchChildrenMock = mock(
-  async (_client: Client, blockId: string): Promise<{ pages: MockPage[]; databaseIds: string[] }> => {
+  async (
+    _client: Client,
+    blockId: string
+  ): Promise<{ pages: MockPage[]; databaseIds: string[] }> => {
     return childrenById.get(blockId) ?? { pages: [], databaseIds: [] };
   }
 );

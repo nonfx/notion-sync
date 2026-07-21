@@ -228,6 +228,7 @@ Single-root `init` / `sync --output` still works; config-driven sync is an alter
 | `concurrency` | No | Parallel Notion API requests during tree build (default: `2`) |
 | `retry.attempts` | No | Max retry attempts on rate limits (default: `5`) |
 | `defaultExclude` | No | Glob selectors applied to every source's exclude set |
+| `defaultDateFilter` | No | Global date range on `last_edited_time`; intersects with per-source `dateFilter` |
 | `sources` | Yes | Non-empty array of Notion roots to pull |
 
 Each `sources[]` entry:
@@ -240,8 +241,30 @@ Each `sources[]` entry:
 | `include` | No | Selectors for subtrees to keep |
 | `exclude` | No | Selectors for subtrees to drop |
 | `maxDepth` | No | Max recursion depth for this source (default: `10`) |
+| `dateFilter` | No | Per-source date range on `last_edited_time` (`after` / `before`, ISO-8601) |
 
 Each source gets its own `.notion-rsync/index.json` under its output subdirectory.
+
+### Date filtering
+
+Filter pages by `last_edited_time` in addition to ID/glob selectors. Set `defaultDateFilter` globally and/or `dateFilter` per source:
+
+```json
+{
+  "defaultDateFilter": { "after": "2025-01-01" },
+  "sources": [
+    {
+      "id": "...",
+      "output": "recent-only",
+      "dateFilter": { "after": "2026-01-01", "before": "2026-06-30" }
+    }
+  ]
+}
+```
+
+When both global and per-source bounds are set, the effective range is the intersection (later `after`, earlier `before`). Pages outside the range are excluded from sync; stale files are removed on the next run via the existing index diff.
+
+Date exclusion does not skip fetching a node's children — an old parent may have recently edited children that still sync. Dry-run shows the effective date range per source.
 
 ### Selectors
 
@@ -266,6 +289,7 @@ See [`notion-rsync.config.example.json`](notion-rsync.config.example.json):
   "concurrency": 2,
   "retry": { "attempts": 6 },
   "defaultExclude": ["**/Archive/**"],
+  "defaultDateFilter": { "after": "2025-01-01" },
   "sources": [
     {
       "id": "d95e4b1bba544a1794a68c9005e4fa0a",
@@ -276,13 +300,14 @@ See [`notion-rsync.config.example.json`](notion-rsync.config.example.json):
       "id": "2df24584254b804094d3dfb56506b0be",
       "name": "Sync2Hire",
       "output": "sync2hire",
-      "exclude": ["**/Archive/**", "9ded838dec5c451498cc03000357ca50"]
+      "exclude": ["**/Archive/**", "9ded838dec5c451498cc03000357ca50"],
+      "dateFilter": { "after": "2026-01-01" }
     }
   ]
 }
 ```
 
-Dry-run prints the resolved plan (output paths, effective include/exclude, concurrency, retry):
+Dry-run prints the resolved plan (output paths, effective include/exclude, date ranges, concurrency, retry):
 
 ```bash
 notion-rsync sync --config notion-rsync.config.json -n

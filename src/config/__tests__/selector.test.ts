@@ -150,9 +150,9 @@ describe("include-override traversal", () => {
   it("walks into an excluded parent when an include glob targets a descendant", () => {
     const archive = node(["Sync2Hire", "Archive"]);
 
-    expect(
-      globCouldMatchDescendant("Sync2Hire/Archive/Keeper/**", ["Sync2Hire", "Archive"])
-    ).toBe(true);
+    expect(globCouldMatchDescendant("Sync2Hire/Archive/Keeper/**", ["Sync2Hire", "Archive"])).toBe(
+      true
+    );
 
     expect(
       shouldTraverseExcludedNode(
@@ -168,9 +168,7 @@ describe("include-override traversal", () => {
   it("does not traverse excluded branches when include globs only match elsewhere", () => {
     const otherBranch = node(["Sync2Hire", "Other"]);
 
-    expect(
-      globCouldMatchDescendant("Sync2Hire/Important/**", ["Sync2Hire", "Other"])
-    ).toBe(false);
+    expect(globCouldMatchDescendant("Sync2Hire/Important/**", ["Sync2Hire", "Other"])).toBe(false);
 
     expect(
       shouldPruneNode(
@@ -244,7 +242,9 @@ describe("include-override traversal", () => {
   });
 
   it("computePendingIncludeIds returns undefined when there are no include ids", () => {
-    expect(computePendingIncludeIds(selectors({ exclude: [classifySelector("**/Archive/**")] }))).toBeUndefined();
+    expect(
+      computePendingIncludeIds(selectors({ exclude: [classifySelector("**/Archive/**")] }))
+    ).toBeUndefined();
     expect(computePendingIncludeIds(undefined)).toBeUndefined();
   });
 });
@@ -256,9 +256,9 @@ describe("resolveDateDecision", () => {
   });
 
   it("excludes timestamps before after bound", () => {
-    expect(
-      resolveDateDecision("2025-12-31T23:59:59.999Z", { after: "2026-01-01" })
-    ).toBe("exclude");
+    expect(resolveDateDecision("2025-12-31T23:59:59.999Z", { after: "2026-01-01" })).toBe(
+      "exclude"
+    );
     expect(resolveDateDecision("2026-01-01T00:00:00.000Z", { after: "2026-01-01" })).toBe(
       "include"
     );
