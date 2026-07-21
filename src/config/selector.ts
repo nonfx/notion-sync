@@ -122,8 +122,16 @@ export function matchGlob(pattern: string, titlePath: string[]): boolean {
 /**
  * Apply selector precedence for one node.
  * explicit include ID > explicit exclude ID > include glob > exclude glob > defaultExclude glob > default include.
+ *
+ * `ancestorExcluded` cascades an ancestor's exclusion down to descendants that don't
+ * match any selector of their own, so traversing into an excluded parent to find one
+ * buried keeper (include-override) doesn't accidentally sweep in its unrelated siblings.
  */
-export function resolveNodeDecision(node: SelectorNode, selectors: EffectiveSelectors): SelectorDecision {
+export function resolveNodeDecision(
+  node: SelectorNode,
+  selectors: EffectiveSelectors,
+  ancestorExcluded = false
+): SelectorDecision {
   const partitioned = partitionSelectors(selectors);
   const normalizedId = normalizeNotionId(node.id);
 
@@ -157,7 +165,7 @@ export function resolveNodeDecision(node: SelectorNode, selectors: EffectiveSele
     }
   }
 
-  return "include";
+  return ancestorExcluded ? "exclude" : "include";
 }
 
 /**
@@ -187,11 +195,24 @@ export function globCouldMatchDescendant(pattern: string, titlePath: string[]): 
 
 /**
  * Return true when an excluded node may contain an explicitly included descendant.
+ *
+ * `pendingIncludeIds` scopes id-based override search to targets not yet found
+ * anywhere in the tree (see `computePendingIncludeIds`). Without a shared mutable
+ * set across the whole crawl, any include id configured for the source would force
+ * traversal into *every* excluded subtree looking for it, even unrelated ones — so
+ * callers that don't share crawl-wide state (e.g. isolated unit tests) fall back to
+ * a fresh set derived from `selectors` each call, matching this function's original
+ * "is there an unresolved include id at all" semantics.
  */
-export function shouldTraverseExcludedNode(node: SelectorNode, selectors: EffectiveSelectors): boolean {
+export function shouldTraverseExcludedNode(
+  node: SelectorNode,
+  selectors: EffectiveSelectors,
+  pendingIncludeIds?: Set<string>
+): boolean {
   const partitioned = partitionSelectors(selectors);
+  const remainingIncludeIds = pendingIncludeIds ?? new Set(partitioned.includeIds.map((s) => s.id));
 
-  if (partitioned.includeIds.length > 0) {
+  if (remainingIncludeIds.size > 0) {
     return true;
   }
 
@@ -204,13 +225,38 @@ export function shouldTraverseExcludedNode(node: SelectorNode, selectors: Effect
   return false;
 }
 
+/** Ancestor-exclusion + in-flight include-id state threaded through a tree crawl */
+export interface PruneContext {
+  ancestorExcluded?: boolean;
+  pendingIncludeIds?: Set<string>;
+}
+
 /**
  * Return true when child fetch should be skipped for this node.
  */
-export function shouldPruneNode(node: SelectorNode, selectors: EffectiveSelectors): boolean {
-  if (resolveNodeDecision(node, selectors) === "include") {
+export function shouldPruneNode(
+  node: SelectorNode,
+  selectors: EffectiveSelectors,
+  context: PruneContext = {}
+): boolean {
+  const decision = resolveNodeDecision(node, selectors, context.ancestorExcluded ?? false);
+  if (decision === "include") {
     return false;
   }
 
-  return !shouldTraverseExcludedNode(node, selectors);
+  return !shouldTraverseExcludedNode(node, selectors, context.pendingIncludeIds);
+}
+
+/**
+ * Compute the initial set of unresolved include-id targets for a source, shared
+ * (and mutated) across a whole tree crawl so override traversal stops searching
+ * once every configured include id has actually been found.
+ */
+export function computePendingIncludeIds(selectors?: EffectiveSelectors): Set<string> | undefined {
+  if (!selectors) {
+    return undefined;
+  }
+
+  const ids = selectors.include.filter((selector) => selector.kind === "id").map((selector) => selector.id!);
+  return ids.length > 0 ? new Set(ids) : undefined;
 }

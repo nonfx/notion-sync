@@ -6,6 +6,7 @@ import { describe, it, expect } from "bun:test";
 import { classifySelector } from "../schema.ts";
 import type { EffectiveSelectors } from "../load.ts";
 import {
+  computePendingIncludeIds,
   globCouldMatchDescendant,
   matchGlob,
   resolveNodeDecision,
@@ -193,5 +194,56 @@ describe("include-override traversal", () => {
         })
       )
     ).toBe("include");
+  });
+
+  it("cascades an excluded ancestor's decision to a sibling with no selector of its own", () => {
+    // Regression: traversing into "Excluded Parent" to find a buried include-id
+    // keeper must not let its unrelated sibling default back to "include".
+    const sibling = node(["Root", "Excluded Parent", "Sibling"]);
+
+    const decision = resolveNodeDecision(
+      sibling,
+      selectors({
+        exclude: [classifySelector(EXCLUDED_ID)],
+        include: [classifySelector(KEEPER_ID)],
+      }),
+      /* ancestorExcluded */ true
+    );
+
+    expect(decision).toBe("exclude");
+  });
+
+  it("does not require ancestorExcluded cascade when no ancestor was excluded", () => {
+    const sibling = node(["Root", "Sibling"]);
+
+    expect(
+      resolveNodeDecision(sibling, selectors({ include: [classifySelector(KEEPER_ID)] }), false)
+    ).toBe("include");
+  });
+
+  it("stops traversing unrelated excluded subtrees once every include id is found (pendingIncludeIds)", () => {
+    // Regression: a source with an unrelated include-id override must not force
+    // traversal into every other excluded subtree, e.g. an unrelated Archive.
+    const archive = node(["Root", "Archive"]);
+    const sourceSelectors = selectors({
+      defaultExclude: [classifySelector("**/Archive/**")],
+      include: [classifySelector(KEEPER_ID)],
+    });
+
+    // Fresh crawl: the keeper hasn't been found yet, so Archive still gets traversed.
+    const pending = computePendingIncludeIds(sourceSelectors)!;
+    expect(pending.has(KEEPER_ID)).toBe(true);
+    expect(shouldPruneNode(archive, sourceSelectors, { pendingIncludeIds: pending })).toBe(false);
+
+    // Once the keeper elsewhere in the tree has been found and consumed...
+    pending.delete(KEEPER_ID);
+
+    // ...Archive is now a plain, unrelated excluded subtree and should be pruned.
+    expect(shouldPruneNode(archive, sourceSelectors, { pendingIncludeIds: pending })).toBe(true);
+  });
+
+  it("computePendingIncludeIds returns undefined when there are no include ids", () => {
+    expect(computePendingIncludeIds(selectors({ exclude: [classifySelector("**/Archive/**")] }))).toBeUndefined();
+    expect(computePendingIncludeIds(undefined)).toBeUndefined();
   });
 });

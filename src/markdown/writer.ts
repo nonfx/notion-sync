@@ -64,6 +64,21 @@ function buildLinkMap(
   usedFilenames: Set<string>,
   linkMap: LinkMap
 ): void {
+  // Excluded leaf nodes (fully pruned subtrees) are never written and have no path.
+  if (page.excluded && page.children.length === 0) {
+    return;
+  }
+
+  // Excluded node kept only for a buried included descendant: no file of its own,
+  // but children still nest under its directory name (mirrors writePageRecursive).
+  if (page.excluded) {
+    const dirName = slugify(page.title);
+    for (const child of page.children) {
+      buildLinkMap(child, baseDir, [...pathSegments, dirName], usedFilenames, linkMap);
+    }
+    return;
+  }
+
   const dirPath = join(baseDir, ...pathSegments);
   const hasChildren = page.children.length > 0;
 
@@ -102,6 +117,30 @@ async function writePageRecursive(
   linkMap: LinkMap,
   dryRun?: boolean
 ): Promise<void> {
+  // Fully pruned excluded subtree: nothing to write, nothing to recurse into.
+  if (page.excluded && page.children.length === 0) {
+    return;
+  }
+
+  // Excluded node kept only to reach a buried included descendant (Decision #6
+  // include-override): skip its own content/index.md, but still write children
+  // at the same nesting depth its directory would have occupied.
+  if (page.excluded) {
+    const dirName = slugify(page.title);
+    for (const child of page.children) {
+      await writePageRecursive(
+        child,
+        baseDir,
+        [...pathSegments, dirName],
+        usedFilenames,
+        results,
+        linkMap,
+        dryRun
+      );
+    }
+    return;
+  }
+
   // Determine directory and filename
   const dirPath = join(baseDir, ...pathSegments);
   const hasChildren = page.children.length > 0;

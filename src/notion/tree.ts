@@ -17,13 +17,73 @@ import {
   type PropertyValue,
 } from "./client.ts";
 import { log } from "../utils/logger.ts";
+import { normalizeNotionId } from "../config/schema.ts";
 import type { EffectiveSelectors } from "../config/load.ts";
-import { shouldPruneNode } from "../config/selector.ts";
+import {
+  computePendingIncludeIds,
+  resolveNodeDecision,
+  shouldTraverseExcludedNode,
+} from "../config/selector.ts";
 
 /** Options passed through recursive tree building */
 export interface TreeBuildOptions {
   selectors?: EffectiveSelectors;
   titlePath?: string[];
+  /** Cascades an excluded ancestor's default decision to unmatched descendants. */
+  ancestorExcluded?: boolean;
+  /** Shared, mutated across the crawl so include-id override search can stop early. */
+  pendingIncludeIds?: Set<string>;
+}
+
+/** Decision for one node: fetch normally, skip entirely, or skip content but still recurse. */
+interface NodePruneResult {
+  /** True when this node's own content should not be written, but children still might be. */
+  excluded: boolean;
+  /** True when children should not be fetched at all. */
+  pruneChildren: boolean;
+  /** Options to pass down to this node's children. */
+  childOptions: TreeBuildOptions;
+}
+
+/**
+ * Apply selector precedence + include-override traversal for one node, mutating
+ * `pendingIncludeIds` when this node itself satisfies a configured include id.
+ */
+function resolvePruneResult(
+  nodeId: string,
+  titlePath: string[],
+  options: TreeBuildOptions
+): NodePruneResult {
+  const selectors = options.selectors;
+  const childOptions: TreeBuildOptions = { ...options, titlePath };
+
+  if (!selectors) {
+    return { excluded: false, pruneChildren: false, childOptions };
+  }
+
+  const ancestorExcluded = options.ancestorExcluded ?? false;
+  const node = { id: nodeId, titlePath };
+  const decision = resolveNodeDecision(node, selectors, ancestorExcluded);
+
+  if (decision === "include") {
+    options.pendingIncludeIds?.delete(normalizeNotionId(nodeId));
+    return {
+      excluded: false,
+      pruneChildren: false,
+      childOptions: { ...childOptions, ancestorExcluded: false },
+    };
+  }
+
+  const shouldTraverse = shouldTraverseExcludedNode(node, selectors, options.pendingIncludeIds);
+  if (!shouldTraverse) {
+    return { excluded: true, pruneChildren: true, childOptions };
+  }
+
+  return {
+    excluded: true,
+    pruneChildren: false,
+    childOptions: { ...childOptions, ancestorExcluded: true },
+  };
 }
 
 /** Default max concurrent requests when config does not override */
@@ -79,6 +139,8 @@ export interface PageNode {
   blocks: NotionBlock[] | null; // null means not fetched yet
   isDatabase?: boolean; // true for database nodes (no blocks to fetch)
   properties?: Record<string, PropertyValue>; // Metadata from database entry
+  /** True when this node itself is excluded by selectors (only traversed for a buried include). */
+  excluded?: boolean;
 }
 
 /**
@@ -90,14 +152,19 @@ export async function buildTree(
   maxDepth = 10,
   options: TreeBuildOptions = {}
 ): Promise<PageNode> {
+  const initializedOptions: TreeBuildOptions = {
+    ...options,
+    pendingIncludeIds: options.pendingIncludeIds ?? computePendingIncludeIds(options.selectors),
+  };
+
   // Try fetching as a page first, fall back to database
   try {
-    return await buildPageTree(client, rootId, 0, maxDepth, options);
+    return await buildPageTree(client, rootId, 0, maxDepth, initializedOptions);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("is a database")) {
       log.info("Root is a database, fetching entries...");
-      return await buildDatabaseTree(client, rootId, maxDepth, 0, options);
+      return await buildDatabaseTree(client, rootId, maxDepth, 0, initializedOptions);
     }
     throw err;
   }
@@ -119,8 +186,8 @@ export async function buildDatabaseTree(
 
   log.info(`${"  ".repeat(depth)}Found database: ${title}`);
 
-  const selectors = options.selectors;
-  if (selectors && shouldPruneNode({ id: database.id, titlePath }, selectors)) {
+  const { excluded, pruneChildren, childOptions } = resolvePruneResult(database.id, titlePath, options);
+  if (pruneChildren) {
     log.debug(`${"  ".repeat(depth)}Pruned database subtree: ${title}`);
     return {
       id: database.id,
@@ -129,6 +196,7 @@ export async function buildDatabaseTree(
       children: [],
       blocks: null,
       isDatabase: true,
+      excluded,
     };
   }
 
@@ -141,11 +209,6 @@ export async function buildDatabaseTree(
   // Also look for nested databases inside column layouts etc
   const nestedDbIds = await findNestedDatabases(client, databaseId);
   const allDbIds = [...new Set([...childDbIds, ...nestedDbIds])];
-
-  const childOptions: TreeBuildOptions = {
-    ...options,
-    titlePath,
-  };
 
   // Build child nodes in parallel
   const childPromises = [
@@ -162,6 +225,7 @@ export async function buildDatabaseTree(
     children,
     blocks: null,
     isDatabase: true,
+    excluded,
   };
 }
 
@@ -230,8 +294,8 @@ export async function buildPageTree(
 
   log.info(`${"  ".repeat(depth)}Found page: ${title}`);
 
-  const selectors = options.selectors;
-  if (selectors && shouldPruneNode({ id: page.id, titlePath }, selectors)) {
+  const { excluded, pruneChildren, childOptions } = resolvePruneResult(page.id, titlePath, options);
+  if (pruneChildren) {
     log.debug(`${"  ".repeat(depth)}Pruned page subtree: ${title}`);
     return {
       id: page.id,
@@ -240,15 +304,11 @@ export async function buildPageTree(
       children: [],
       blocks: null,
       properties: Object.keys(properties).length > 0 ? properties : undefined,
+      excluded,
     };
   }
 
   const { pages: childPages, databaseIds } = await fetchChildren(client, rootPageId);
-
-  const childOptions: TreeBuildOptions = {
-    ...options,
-    titlePath,
-  };
 
   // Build child nodes in parallel (with concurrency limit)
   const childPromises = [
@@ -267,6 +327,7 @@ export async function buildPageTree(
     children,
     blocks: null,
     properties: Object.keys(properties).length > 0 ? properties : undefined,
+    excluded,
   };
 }
 
@@ -287,8 +348,8 @@ export async function fetchPageBlocks(client: Client, node: PageNode): Promise<P
  * Fetch blocks for all pages in the tree (parallel)
  */
 export async function fetchAllBlocks(client: Client, tree: PageNode): Promise<PageNode> {
-  // Skip fetching blocks for database nodes (they have no content, only children)
-  const withBlocks = tree.isDatabase ? tree : await fetchPageBlocks(client, tree);
+  // Skip database nodes (no content) and excluded nodes (never written, so fetching wastes a call)
+  const withBlocks = tree.isDatabase || tree.excluded ? tree : await fetchPageBlocks(client, tree);
 
   // Fetch children's blocks in parallel
   const childPromises = withBlocks.children.map((child) => fetchAllBlocks(client, child));
