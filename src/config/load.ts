@@ -2,6 +2,7 @@
  * Config discovery, parsing, name resolution, and effective selector computation.
  */
 
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Client } from "@notionhq/client";
 import {
@@ -13,7 +14,9 @@ import {
 } from "./schema.ts";
 import {
   createNotionClient,
+  fetchDatabase,
   fetchPage,
+  getDatabaseTitle,
   getPageTitle,
   setRetryAttempts,
   withRetry,
@@ -97,12 +100,12 @@ export function discoverConfigPath(options: { configPath?: string; cwd?: string 
  * Read and parse a config file from disk.
  */
 export async function readConfigFile(configPath: string): Promise<unknown> {
-  const file = Bun.file(configPath);
-  if (!(await file.exists())) {
+  let text: string;
+  try {
+    text = await readFile(configPath, "utf-8");
+  } catch {
     throw new Error(`Config file not found: ${configPath}`);
   }
-
-  const text = await file.text();
   try {
     return JSON.parse(text);
   } catch {
@@ -133,9 +136,19 @@ export function computeEffectiveSelectors(
 
 function createDefaultTitleResolver(client: Client): PageTitleResolver {
   return {
-    async getTitle(pageId: string): Promise<string> {
-      const page = await withRetry(() => fetchPage(client, pageId));
-      return getPageTitle(page);
+    async getTitle(rootId: string): Promise<string> {
+      try {
+        const page = await withRetry(() => fetchPage(client, rootId));
+        return getPageTitle(page);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("is a database")) {
+          throw error;
+        }
+
+        const database = await withRetry(() => fetchDatabase(client, rootId));
+        return getDatabaseTitle(database);
+      }
     },
   };
 }
