@@ -6,6 +6,7 @@ import { describe, it, expect } from "bun:test";
 import {
   computeEffectiveSelectors,
   discoverConfigPath,
+  formatResolvedPlan,
   NameResolutionError,
   parseConfig,
   resolveConfig,
@@ -143,6 +144,106 @@ describe("computeEffectiveSelectors", () => {
     expect(selectors.include).toEqual([]);
     expect(selectors.exclude.map((selector) => selector.raw)).toEqual(["**/Private/**"]);
     expect(selectors.defaultExclude.map((selector) => selector.raw)).toEqual(["**/Archive/**"]);
+  });
+
+  it("uses source-only dateFilter when no default is set", () => {
+    const selectors = computeEffectiveSelectors(
+      {
+        id: PAGE_A,
+        output: "x",
+        dateFilter: { after: "2026-03-01", before: "2026-12-31" },
+      },
+      []
+    );
+
+    expect(selectors.dateFilter).toEqual({
+      after: "2026-03-01",
+      before: "2026-12-31",
+    });
+  });
+
+  it("uses default-only dateFilter when source has none", () => {
+    const selectors = computeEffectiveSelectors(
+      {
+        id: PAGE_A,
+        output: "x",
+      },
+      [],
+      { after: "2026-01-01", before: "2026-06-30" }
+    );
+
+    expect(selectors.dateFilter).toEqual({
+      after: "2026-01-01",
+      before: "2026-06-30",
+    });
+  });
+
+  it("intersects source and default date bounds (later after, earlier before)", () => {
+    const selectors = computeEffectiveSelectors(
+      {
+        id: PAGE_A,
+        output: "x",
+        dateFilter: { after: "2026-02-01", before: "2026-09-30" },
+      },
+      [],
+      { after: "2026-01-01", before: "2026-12-31" }
+    );
+
+    expect(selectors.dateFilter).toEqual({
+      after: "2026-02-01",
+      before: "2026-09-30",
+    });
+  });
+
+  it("narrows bounds when source and default disagree", () => {
+    const selectors = computeEffectiveSelectors(
+      {
+        id: PAGE_A,
+        output: "x",
+        dateFilter: { after: "2026-01-01", before: "2026-12-31" },
+      },
+      [],
+      { after: "2026-06-01", before: "2026-06-30" }
+    );
+
+    expect(selectors.dateFilter).toEqual({
+      after: "2026-06-01",
+      before: "2026-06-30",
+    });
+  });
+
+  it("omits dateFilter when neither source nor default set one", () => {
+    const selectors = computeEffectiveSelectors({ id: PAGE_A, output: "x" }, []);
+
+    expect(selectors.dateFilter).toBeUndefined();
+  });
+});
+
+describe("formatResolvedPlan", () => {
+  it("prints default and effective dateFilter per source", async () => {
+    const config = parseConfig({
+      output: "./notion-export",
+      defaultDateFilter: { after: "2026-01-01", before: "2026-12-31" },
+      sources: [
+        {
+          id: PAGE_A,
+          name: "Professional TODOs",
+          output: "professional-todos",
+          dateFilter: { after: "2026-03-01" },
+        },
+      ],
+    });
+
+    const resolved = await resolveConfig(
+      config,
+      "notion-rsync.config.json",
+      createResolver({ [PAGE_A]: "Professional TODOs" })
+    );
+
+    const plan = formatResolvedPlan(resolved);
+
+    expect(plan).toContain("Default dateFilter: after 2026-01-01, before 2026-12-31");
+    expect(plan).toContain("effective dateFilter: after 2026-03-01, before 2026-12-31");
   });
 });
 

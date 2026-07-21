@@ -9,6 +9,7 @@ import {
   classifySelector,
   validateConfig,
   type ConfigFile,
+  type DateFilterConfig,
   type ParsedSelector,
   type SourceConfig,
 } from "./schema.ts";
@@ -33,6 +34,7 @@ export interface EffectiveSelectors {
   include: ParsedSelector[];
   exclude: ParsedSelector[];
   defaultExclude: ParsedSelector[];
+  dateFilter?: DateFilterConfig;
 }
 
 /** A source after id/name resolution and selector computation */
@@ -52,6 +54,7 @@ export interface ResolvedConfig {
   concurrency?: number;
   retry?: ConfigFile["retry"];
   defaultExclude: ParsedSelector[];
+  defaultDateFilter?: DateFilterConfig;
   sources: ResolvedSource[];
 }
 
@@ -121,16 +124,58 @@ export function parseConfig(raw: unknown): ConfigFile {
 }
 
 /**
+ * Intersect source and default date bounds (later after, earlier before).
+ */
+function intersectDateFilters(
+  source?: DateFilterConfig,
+  defaultFilter?: DateFilterConfig
+): DateFilterConfig | undefined {
+  const afterValues = [source?.after, defaultFilter?.after].filter(
+    (value): value is string => value !== undefined
+  );
+  const beforeValues = [source?.before, defaultFilter?.before].filter(
+    (value): value is string => value !== undefined
+  );
+
+  const after =
+    afterValues.length > 0
+      ? afterValues.reduce((latest, current) =>
+          Date.parse(current) > Date.parse(latest) ? current : latest
+        )
+      : undefined;
+
+  const before =
+    beforeValues.length > 0
+      ? beforeValues.reduce((earliest, current) =>
+          Date.parse(current) < Date.parse(earliest) ? current : earliest
+        )
+      : undefined;
+
+  if (after === undefined && before === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(after !== undefined ? { after } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
+}
+
+/**
  * Build the effective include/exclude selector sets for one source.
  */
 export function computeEffectiveSelectors(
   source: SourceConfig,
-  defaultExclude: ParsedSelector[]
+  defaultExclude: ParsedSelector[],
+  defaultDateFilter?: DateFilterConfig
 ): EffectiveSelectors {
+  const dateFilter = intersectDateFilters(source.dateFilter, defaultDateFilter);
+
   return {
     include: (source.include ?? []).map(classifySelector),
     exclude: (source.exclude ?? []).map(classifySelector),
     defaultExclude,
+    ...(dateFilter !== undefined ? { dateFilter } : {}),
   };
 }
 
@@ -162,6 +207,7 @@ export async function resolveConfig(
   titleResolver: PageTitleResolver
 ): Promise<ResolvedConfig> {
   const defaultExclude = (config.defaultExclude ?? []).map(classifySelector);
+  const defaultDateFilter = config.defaultDateFilter;
   const namesBySource = new Map<string, string[]>();
 
   const sources: ResolvedSource[] = [];
@@ -185,7 +231,7 @@ export async function resolveConfig(
       name: resolvedName,
       output: source.output,
       outputDir: join(config.output ?? "./docs", source.output),
-      selectors: computeEffectiveSelectors(source, defaultExclude),
+      selectors: computeEffectiveSelectors(source, defaultExclude, defaultDateFilter),
       ...(source.maxDepth !== undefined ? { maxDepth: source.maxDepth } : {}),
     });
   }
@@ -205,6 +251,7 @@ export async function resolveConfig(
     ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
     ...(config.retry !== undefined ? { retry: config.retry } : {}),
     defaultExclude,
+    ...(defaultDateFilter !== undefined ? { defaultDateFilter } : {}),
     sources,
   };
 }
@@ -239,6 +286,23 @@ function formatSelectorList(selectors: ParsedSelector[]): string {
 }
 
 /**
+ * Format a date filter for dry-run output.
+ */
+function formatDateFilter(dateFilter: DateFilterConfig): string {
+  const parts: string[] = [];
+
+  if (dateFilter.after !== undefined) {
+    parts.push(`after ${dateFilter.after}`);
+  }
+
+  if (dateFilter.before !== undefined) {
+    parts.push(`before ${dateFilter.before}`);
+  }
+
+  return parts.join(", ");
+}
+
+/**
  * Format a resolved config plan for dry-run output.
  */
 export function formatResolvedPlan(resolved: ResolvedConfig): string {
@@ -254,6 +318,10 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
 
   if (resolved.defaultExclude.length > 0) {
     lines.push(`Default exclude: ${formatSelectorList(resolved.defaultExclude)}`);
+  }
+
+  if (resolved.defaultDateFilter !== undefined) {
+    lines.push(`Default dateFilter: ${formatDateFilter(resolved.defaultDateFilter)}`);
   }
 
   lines.push("", "Sources:");
@@ -273,6 +341,10 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
 
     if (source.maxDepth !== undefined) {
       lines.push(`    maxDepth: ${source.maxDepth}`);
+    }
+
+    if (source.selectors.dateFilter !== undefined) {
+      lines.push(`    effective dateFilter: ${formatDateFilter(source.selectors.dateFilter)}`);
     }
   }
 
