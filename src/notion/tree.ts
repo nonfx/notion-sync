@@ -9,6 +9,7 @@ import {
   fetchBlocks,
   fetchDatabase,
   fetchDatabasePages,
+  isLinkedDatabaseError,
   getPageTitle,
   getDatabaseTitle,
   getPageProperties,
@@ -164,7 +165,11 @@ export async function buildTree(
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("is a database")) {
       log.info("Root is a database, fetching entries...");
-      return await buildDatabaseTree(client, rootId, maxDepth, 0, initializedOptions);
+      const databaseTree = await buildDatabaseTree(client, rootId, maxDepth, 0, initializedOptions);
+      if (!databaseTree) {
+        throw new Error(`Cannot sync linked database root: ${rootId}`);
+      }
+      return databaseTree;
     }
     throw err;
   }
@@ -179,8 +184,17 @@ export async function buildDatabaseTree(
   maxDepth = 10,
   depth = 0,
   options: TreeBuildOptions = {}
-): Promise<PageNode> {
-  const database = await fetchDatabase(client, databaseId);
+): Promise<PageNode | null> {
+  let database;
+  try {
+    database = await fetchDatabase(client, databaseId);
+  } catch (error) {
+    if (isLinkedDatabaseError(error)) {
+      log.warn(`Skipping linked database view: ${databaseId}`);
+      return null;
+    }
+    throw error;
+  }
   const title = getDatabaseTitle(database);
   const titlePath = [...(options.titlePath ?? []), title];
 
@@ -216,7 +230,9 @@ export async function buildDatabaseTree(
     ...childPages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
     ...allDbIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
   ];
-  const children = await runWithConcurrency(childPromises, treeConcurrency);
+  const children = (await runWithConcurrency(childPromises, treeConcurrency)).filter(
+    (child): child is PageNode => child !== null
+  );
 
   return {
     id: database.id,
@@ -318,7 +334,9 @@ export async function buildPageTree(
     ),
   ];
 
-  const children = await runWithConcurrency(childPromises, treeConcurrency);
+  const children = (await runWithConcurrency(childPromises, treeConcurrency)).filter(
+    (child): child is PageNode => child !== null
+  );
 
   return {
     id: page.id,

@@ -285,6 +285,14 @@ export function getPageTitle(page: NotionPage): string {
 }
 
 /**
+ * Whether a Notion API error refers to a linked database view (not retrievable via databases.retrieve).
+ */
+export function isLinkedDatabaseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("linked database");
+}
+
+/**
  * Fetch a database by ID
  */
 export async function fetchDatabase(client: Client, databaseId: string): Promise<NotionDatabase> {
