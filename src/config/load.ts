@@ -12,6 +12,7 @@ import {
   type SourceConfig,
 } from "./schema.ts";
 import { createNotionClient, fetchPage, getPageTitle, withRetry } from "../notion/client.ts";
+import { sync, type SyncOptions } from "../sync/engine.ts";
 import { log } from "../utils/logger.ts";
 
 export const DEFAULT_CONFIG_FILENAME = "notion-rsync.config.json";
@@ -67,6 +68,8 @@ export interface ConfigSyncOptions {
   notionToken: string;
   dryRun: boolean;
   titleResolver?: PageTitleResolver;
+  /** Injectable sync runner for tests. */
+  syncSource?: (options: SyncOptions) => Promise<void>;
 }
 
 /**
@@ -110,7 +113,7 @@ export function parseConfig(raw: unknown): ConfigFile {
  */
 export function computeEffectiveSelectors(
   source: SourceConfig,
-  defaultExclude: ParsedSelector[],
+  defaultExclude: ParsedSelector[]
 ): EffectiveSelectors {
   const include = (source.include ?? []).map(classifySelector);
   const exclude = [...(source.exclude ?? []).map(classifySelector), ...defaultExclude];
@@ -133,7 +136,7 @@ function createDefaultTitleResolver(client: Client): PageTitleResolver {
 export async function resolveConfig(
   config: ConfigFile,
   configPath: string,
-  titleResolver: PageTitleResolver,
+  titleResolver: PageTitleResolver
 ): Promise<ResolvedConfig> {
   const defaultExclude = (config.defaultExclude ?? []).map(classifySelector);
   const namesBySource = new Map<string, string[]>();
@@ -145,7 +148,7 @@ export async function resolveConfig(
 
     if (source.name !== undefined && source.name !== title) {
       throw new NameResolutionError(
-        `Name mismatch for source ${source.id}: config name "${source.name}" does not match Notion title "${title}"`,
+        `Name mismatch for source ${source.id}: config name "${source.name}" does not match Notion title "${title}"`
       );
     }
 
@@ -168,7 +171,7 @@ export async function resolveConfig(
     const uniqueIds = [...new Set(ids)];
     if (uniqueIds.length > 1) {
       throw new NameResolutionError(
-        `Ambiguous name "${name}": resolves to multiple ids (${uniqueIds.join(", ")})`,
+        `Ambiguous name "${name}": resolves to multiple ids (${uniqueIds.join(", ")})`
       );
     }
   }
@@ -186,7 +189,9 @@ export async function resolveConfig(
 /**
  * Discover, read, validate, and resolve a config file.
  */
-export async function loadConfig(options: LoadConfigOptions & { notionToken: string }): Promise<ResolvedConfig> {
+export async function loadConfig(
+  options: LoadConfigOptions & { notionToken: string }
+): Promise<ResolvedConfig> {
   const configPath = discoverConfigPath(options);
   const raw = await readConfigFile(configPath);
   const config = parseConfig(raw);
@@ -199,10 +204,7 @@ export async function loadConfig(options: LoadConfigOptions & { notionToken: str
  * Format a resolved config plan for dry-run output.
  */
 export function formatResolvedPlan(resolved: ResolvedConfig): string {
-  const lines: string[] = [
-    `Config: ${resolved.configPath}`,
-    `Output root: ${resolved.output}`,
-  ];
+  const lines: string[] = [`Config: ${resolved.configPath}`, `Output root: ${resolved.output}`];
 
   if (resolved.concurrency !== undefined) {
     lines.push(`Concurrency: ${resolved.concurrency}`);
@@ -213,7 +215,9 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
   }
 
   if (resolved.defaultExclude.length > 0) {
-    lines.push(`Default exclude: ${resolved.defaultExclude.map((selector) => selector.raw).join(", ")}`);
+    lines.push(
+      `Default exclude: ${resolved.defaultExclude.map((selector) => selector.raw).join(", ")}`
+    );
   }
 
   lines.push("", "Sources:");
@@ -224,13 +228,13 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
 
     if (source.selectors.include.length > 0) {
       lines.push(
-        `    include: ${source.selectors.include.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`,
+        `    include: ${source.selectors.include.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
       );
     }
 
     if (source.selectors.exclude.length > 0) {
       lines.push(
-        `    exclude: ${source.selectors.exclude.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`,
+        `    exclude: ${source.selectors.exclude.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ")}`
       );
     }
 
@@ -243,19 +247,44 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
 }
 
 /**
- * Phase 1 stub orchestrator: load config, resolve names, print the plan.
+ * Run the existing single-root pull for each resolved config source sequentially.
+ */
+export async function syncResolvedSources(
+  resolved: ResolvedConfig,
+  options: Pick<ConfigSyncOptions, "notionToken" | "dryRun" | "syncSource">
+): Promise<void> {
+  const runSync = options.syncSource ?? sync;
+
+  for (const source of resolved.sources) {
+    log.info(`Syncing source "${source.name}" (${source.id}) → ${source.outputDir}`);
+    await runSync({
+      outputDir: source.outputDir,
+      notionToken: options.notionToken,
+      dryRun: options.dryRun,
+      rootPageId: source.id,
+    });
+  }
+}
+
+/**
+ * Load config and sync each source into its own output subdir.
  */
 export async function syncFromConfig(options: ConfigSyncOptions): Promise<void> {
-  const configPath = discoverConfigPath(options);
-  const raw = await readConfigFile(configPath);
-  const config = parseConfig(raw);
-  const client = createNotionClient({ token: options.notionToken });
-  const titleResolver = options.titleResolver ?? createDefaultTitleResolver(client);
-  const resolved = await resolveConfig(config, configPath, titleResolver);
+  const resolved = await loadConfig({
+    configPath: options.configPath,
+    cwd: options.cwd,
+    notionToken: options.notionToken,
+    titleResolver: options.titleResolver,
+  });
 
-  console.log(formatResolvedPlan(resolved));
-
-  if (!options.dryRun) {
-    log.warn("Multi-source config sync is not implemented yet; re-run with --dry-run / -n to preview only.");
+  if (options.dryRun) {
+    console.log(formatResolvedPlan(resolved));
+    return;
   }
+
+  log.info(
+    `Starting multi-source sync (${resolved.sources.length} source(s)) from ${resolved.configPath}`
+  );
+  await syncResolvedSources(resolved, options);
+  log.info("Multi-source sync complete!");
 }

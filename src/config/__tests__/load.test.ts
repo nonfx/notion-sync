@@ -9,6 +9,7 @@ import {
   NameResolutionError,
   parseConfig,
   resolveConfig,
+  syncResolvedSources,
   type PageTitleResolver,
 } from "../load.ts";
 import { classifySelector } from "../schema.ts";
@@ -34,7 +35,9 @@ describe("discoverConfigPath", () => {
   });
 
   it("defaults to notion-rsync.config.json in cwd", () => {
-    expect(discoverConfigPath({ cwd: "/tmp/workspace" })).toBe("/tmp/workspace/notion-rsync.config.json");
+    expect(discoverConfigPath({ cwd: "/tmp/workspace" })).toBe(
+      "/tmp/workspace/notion-rsync.config.json"
+    );
   });
 });
 
@@ -63,7 +66,7 @@ describe("resolveConfig", () => {
       createResolver({
         [PAGE_A]: "Professional TODOs",
         [PAGE_B]: "Sync2Hire",
-      }),
+      })
     );
 
     expect(resolved.sources).toHaveLength(2);
@@ -90,16 +93,16 @@ describe("resolveConfig", () => {
       resolveConfig(
         config,
         "notion-rsync.config.json",
-        createResolver({ [PAGE_A]: "Professional TODOs" }),
-      ),
+        createResolver({ [PAGE_A]: "Professional TODOs" })
+      )
     ).rejects.toThrow(NameResolutionError);
 
     await expect(
       resolveConfig(
         config,
         "notion-rsync.config.json",
-        createResolver({ [PAGE_A]: "Professional TODOs" }),
-      ),
+        createResolver({ [PAGE_A]: "Professional TODOs" })
+      )
     ).rejects.toThrow('config name "Wrong Name" does not match Notion title "Professional TODOs"');
   });
 
@@ -118,8 +121,8 @@ describe("resolveConfig", () => {
         createResolver({
           [PAGE_A]: "Todos",
           [PAGE_B]: "Todos",
-        }),
-      ),
+        })
+      )
     ).rejects.toThrow('Ambiguous name "Todos"');
   });
 });
@@ -132,13 +135,57 @@ describe("computeEffectiveSelectors", () => {
         output: "x",
         exclude: ["**/Private/**"],
       },
-      [classifySelector("**/Archive/**")],
+      [classifySelector("**/Archive/**")]
     );
 
     expect(selectors.include).toEqual([]);
     expect(selectors.exclude.map((selector) => selector.raw)).toEqual([
       "**/Private/**",
       "**/Archive/**",
+    ]);
+  });
+});
+
+describe("syncResolvedSources", () => {
+  it("runs each source sequentially with its output subdir and root id", async () => {
+    const config = parseConfig({
+      output: "./notion-export",
+      sources: [
+        { id: PAGE_A, output: "professional-todos" },
+        { id: PAGE_B, output: "sync2hire" },
+      ],
+    });
+
+    const resolved = await resolveConfig(
+      config,
+      "notion-rsync.config.json",
+      createResolver({
+        [PAGE_A]: "Professional TODOs",
+        [PAGE_B]: "Sync2Hire",
+      })
+    );
+
+    const syncCalls: Array<{ outputDir: string; rootPageId?: string }> = [];
+    await syncResolvedSources(resolved, {
+      notionToken: "test-token",
+      dryRun: false,
+      syncSource: async (options) => {
+        syncCalls.push({
+          outputDir: options.outputDir,
+          rootPageId: options.rootPageId,
+        });
+      },
+    });
+
+    expect(syncCalls).toEqual([
+      {
+        outputDir: "notion-export/professional-todos",
+        rootPageId: PAGE_A,
+      },
+      {
+        outputDir: "notion-export/sync2hire",
+        rootPageId: PAGE_B,
+      },
     ]);
   });
 });

@@ -2,20 +2,77 @@
  * Sync engine - orchestrates the sync process
  */
 
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../utils/logger.ts";
 import { createNotionClient } from "../notion/client.ts";
 import { buildTree, fetchAllBlocks, countPages } from "../notion/tree.ts";
 import { writePageTree } from "../markdown/writer.ts";
-import { loadIndex, writeIndex, type SyncIndex, type PageState } from "./index.ts";
+import {
+  INDEX_DIR,
+  createEmptyIndex,
+  loadIndex,
+  writeIndex,
+  type SyncIndex,
+  type PageState,
+} from "./index.ts";
 
 export interface SyncOptions {
   outputDir: string;
   notionToken: string;
   dryRun: boolean;
+  /** Auto-create index when missing (config-driven multi-source sync). */
+  rootPageId?: string;
 }
 
+/**
+ * Ensure a per-source sync index exists, creating one when absent.
+ */
+export async function ensureSyncIndex(outputDir: string, rootPageId: string): Promise<SyncIndex> {
+  const existing = await loadIndex(outputDir);
+  if (existing) {
+    if (existing.rootPageId !== rootPageId) {
+      throw new Error(
+        `Index rootPageId mismatch in ${outputDir}: index has ${existing.rootPageId}, config expects ${rootPageId}`
+      );
+    }
+    return existing;
+  }
+
+  await mkdir(outputDir, { recursive: true });
+  await mkdir(join(outputDir, INDEX_DIR), { recursive: true });
+
+  const index = createEmptyIndex(rootPageId);
+  await writeIndex(outputDir, index);
+  log.info(`Created sync index for root page ${rootPageId} in ${outputDir}`);
+
+  return index;
+}
+
+/**
+ * Load or create the sync index for a pull run.
+ */
+async function resolveSyncIndex(outputDir: string, rootPageId?: string): Promise<SyncIndex | null> {
+  const index = await loadIndex(outputDir);
+  if (index) {
+    if (rootPageId !== undefined && index.rootPageId !== rootPageId) {
+      throw new Error(
+        `Index rootPageId mismatch in ${outputDir}: index has ${index.rootPageId}, config expects ${rootPageId}`
+      );
+    }
+    return index;
+  }
+
+  if (rootPageId === undefined) {
+    return null;
+  }
+
+  return ensureSyncIndex(outputDir, rootPageId);
+}
+
+/**
+ * Pull Notion pages under a single root into one output directory.
+ */
 export async function sync(options: SyncOptions): Promise<void> {
   log.info(`Starting sync to ${options.outputDir}`);
 
@@ -24,7 +81,7 @@ export async function sync(options: SyncOptions): Promise<void> {
   }
 
   // 1. Load sync index
-  const index = await loadIndex(options.outputDir);
+  const index = await resolveSyncIndex(options.outputDir, options.rootPageId);
   if (!index) {
     log.error("No sync configuration found. Run 'notion-rsync init <page-id>' first.");
     return;
