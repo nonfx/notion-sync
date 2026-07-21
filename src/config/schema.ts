@@ -9,6 +9,12 @@ export interface RetryConfig {
   attempts: number;
 }
 
+/** Date range filter on last_edited_time (ISO-8601 strings) */
+export interface DateFilterConfig {
+  after?: string;
+  before?: string;
+}
+
 /** A single Notion root declared in config */
 export interface SourceConfig {
   id: string;
@@ -17,6 +23,7 @@ export interface SourceConfig {
   include?: string[];
   exclude?: string[];
   maxDepth?: number;
+  dateFilter?: DateFilterConfig;
 }
 
 /** Raw config file shape after JSON parse */
@@ -25,6 +32,7 @@ export interface ConfigFile {
   concurrency?: number;
   retry?: RetryConfig;
   defaultExclude?: string[];
+  defaultDateFilter?: DateFilterConfig;
   sources: SourceConfig[];
 }
 
@@ -131,6 +139,54 @@ function assertStringArray(value: unknown, label: string): string[] | undefined 
   return items;
 }
 
+/**
+ * Return true when the string parses to a valid date via Date.parse.
+ */
+function isValidDateString(value: string): boolean {
+  return !Number.isNaN(Date.parse(value));
+}
+
+/**
+ * Parse and validate an optional date filter object.
+ */
+function parseDateFilter(value: unknown, label: string): DateFilterConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const filter = assertObject(value, label);
+  const afterRaw = filter["after"];
+  const beforeRaw = filter["before"];
+
+  let after: string | undefined;
+  let before: string | undefined;
+
+  if (afterRaw !== undefined) {
+    const afterStr = assertString(afterRaw, `${label}.after`);
+    if (!isValidDateString(afterStr)) {
+      throw new ConfigValidationError(`${label}.after must be a valid ISO-8601 date string`);
+    }
+    after = afterStr;
+  }
+
+  if (beforeRaw !== undefined) {
+    const beforeStr = assertString(beforeRaw, `${label}.before`);
+    if (!isValidDateString(beforeStr)) {
+      throw new ConfigValidationError(`${label}.before must be a valid ISO-8601 date string`);
+    }
+    before = beforeStr;
+  }
+
+  if (after !== undefined && before !== undefined && Date.parse(after) > Date.parse(before)) {
+    throw new ConfigValidationError(`${label}.after must not be later than ${label}.before`);
+  }
+
+  return {
+    ...(after !== undefined ? { after } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
+}
+
 function parseRetry(value: unknown): RetryConfig | undefined {
   if (value === undefined) {
     return undefined;
@@ -157,6 +213,7 @@ function parseSource(value: unknown, index: number): SourceConfig {
   const include = assertStringArray(source["include"], `sources[${index}].include`);
   const exclude = assertStringArray(source["exclude"], `sources[${index}].exclude`);
   const maxDepth = assertOptionalNumber(source["maxDepth"], `sources[${index}].maxDepth`);
+  const dateFilter = parseDateFilter(source["dateFilter"], `sources[${index}].dateFilter`);
 
   for (const selector of [...(include ?? []), ...(exclude ?? [])]) {
     if (isNotionId(selector) && !NOTION_ID_PATTERN.test(normalizeNotionId(selector))) {
@@ -171,6 +228,7 @@ function parseSource(value: unknown, index: number): SourceConfig {
     ...(include !== undefined ? { include } : {}),
     ...(exclude !== undefined ? { exclude } : {}),
     ...(maxDepth !== undefined ? { maxDepth } : {}),
+    ...(dateFilter !== undefined ? { dateFilter } : {}),
   };
 }
 
@@ -190,6 +248,7 @@ export function validateConfig(raw: unknown): ConfigFile {
   const concurrency = assertOptionalNumber(config["concurrency"], "concurrency");
   const retry = parseRetry(config["retry"]);
   const defaultExclude = assertStringArray(config["defaultExclude"], "defaultExclude");
+  const defaultDateFilter = parseDateFilter(config["defaultDateFilter"], "defaultDateFilter");
 
   for (const selector of defaultExclude ?? []) {
     if (isNotionId(selector) && !NOTION_ID_PATTERN.test(normalizeNotionId(selector))) {
@@ -202,6 +261,7 @@ export function validateConfig(raw: unknown): ConfigFile {
     ...(concurrency !== undefined ? { concurrency } : {}),
     ...(retry !== undefined ? { retry } : {}),
     ...(defaultExclude !== undefined ? { defaultExclude } : {}),
+    ...(defaultDateFilter !== undefined ? { defaultDateFilter } : {}),
     sources,
   };
 }

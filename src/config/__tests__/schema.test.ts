@@ -80,6 +80,74 @@ describe("validateConfig", () => {
       }),
     ).toThrow("retry.attempts must be a positive integer");
   });
+
+  it("accepts a valid source dateFilter", () => {
+    const config = validateConfig({
+      sources: [
+        {
+          id: "d95e4b1bba544a1794a68c9005e4fa0a",
+          output: "professional-todos",
+          dateFilter: { after: "2026-01-01" },
+        },
+      ],
+    });
+
+    expect(config.sources[0]?.dateFilter).toEqual({ after: "2026-01-01" });
+  });
+
+  it("accepts a valid defaultDateFilter and source dateFilter range", () => {
+    const config = validateConfig({
+      defaultDateFilter: { before: "2026-12-31T23:59:59Z" },
+      sources: [
+        {
+          id: "d95e4b1bba544a1794a68c9005e4fa0a",
+          output: "x",
+          dateFilter: { after: "2026-01-01", before: "2026-06-30" },
+        },
+      ],
+    });
+
+    expect(config.defaultDateFilter).toEqual({ before: "2026-12-31T23:59:59Z" });
+    expect(config.sources[0]?.dateFilter).toEqual({
+      after: "2026-01-01",
+      before: "2026-06-30",
+    });
+  });
+
+  it("rejects malformed dateFilter date strings", () => {
+    expect(() =>
+      validateConfig({
+        sources: [
+          {
+            id: "d95e4b1bba544a1794a68c9005e4fa0a",
+            output: "x",
+            dateFilter: { after: "not-a-date" },
+          },
+        ],
+      }),
+    ).toThrow("sources[0].dateFilter.after must be a valid ISO-8601 date string");
+
+    expect(() =>
+      validateConfig({
+        defaultDateFilter: { before: "yesterday-ish" },
+        sources: [{ id: "d95e4b1bba544a1794a68c9005e4fa0a", output: "x" }],
+      }),
+    ).toThrow("defaultDateFilter.before must be a valid ISO-8601 date string");
+  });
+
+  it("rejects dateFilter when after is later than before", () => {
+    expect(() =>
+      validateConfig({
+        sources: [
+          {
+            id: "d95e4b1bba544a1794a68c9005e4fa0a",
+            output: "x",
+            dateFilter: { after: "2026-06-01", before: "2026-01-01" },
+          },
+        ],
+      }),
+    ).toThrow("sources[0].dateFilter.after must not be later than sources[0].dateFilter.before");
+  });
 });
 
 describe("selector helpers", () => {
