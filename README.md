@@ -166,11 +166,15 @@ notion-rsync sync --output ./docs [--dry-run]
 
 Options:
 - `--output, -o` - Output directory (default: ./docs)
-- `--config` - Path to config file for multi-source sync (default: `./notion-rsync.config.json` in cwd)
+- `--config` - Path to config file for multi-source sync
 - `--dry-run, -n` - Preview changes without writing files
 - `--verbose, -v` - Enable verbose logging
 
-With a config file, `sync` pulls each declared Notion root into its own subdirectory under the global `output` path. See [Configuration file](#configuration-file) below.
+`sync` uses `--config` if given, otherwise falls back to `./notion-rsync.config.json` in the
+current directory if it exists. When a config file is used (explicit or auto-discovered),
+`sync` pulls each declared Notion root into its own subdirectory under the global `output`
+path instead of the legacy single-root behavior. See [Configuration file](#configuration-file)
+below.
 
 ### `push [page-id]`
 

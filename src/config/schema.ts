@@ -2,7 +2,11 @@
  * Config file types and validation for notion-rsync.config.json
  */
 
+import { isAbsolute, normalize, sep } from "node:path";
+
 const NOTION_ID_PATTERN = /^[0-9a-f]{32}$/i;
+const ISO_8601_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 
 /** Retry settings exposed via config */
 export interface RetryConfig {
@@ -119,6 +123,23 @@ function assertOptionalNumber(value: unknown, label: string): number | undefined
   return value;
 }
 
+/**
+ * Validate that a source's output path is relative and stays within the
+ * global output root (no absolute paths, no `..` traversal segments).
+ */
+function assertRelativeOutputPath(value: string, label: string): string {
+  if (isAbsolute(value)) {
+    throw new ConfigValidationError(`${label} must be a relative path`);
+  }
+
+  const normalized = normalize(value);
+  if (normalized === ".." || normalized.startsWith(`..${sep}`)) {
+    throw new ConfigValidationError(`${label} must not escape the output root`);
+  }
+
+  return normalized;
+}
+
 function assertStringArray(value: unknown, label: string): string[] | undefined {
   if (value === undefined) {
     return undefined;
@@ -140,10 +161,12 @@ function assertStringArray(value: unknown, label: string): string[] | undefined 
 }
 
 /**
- * Return true when the string parses to a valid date via Date.parse.
+ * Return true when the string is a valid ISO-8601 date(-time) string.
+ * Rejects lexically non-ISO formats (e.g. "2026/01/01", "January 1, 2026")
+ * that `Date.parse` would otherwise accept.
  */
 function isValidDateString(value: string): boolean {
-  return !Number.isNaN(Date.parse(value));
+  return ISO_8601_PATTERN.test(value) && !Number.isNaN(Date.parse(value));
 }
 
 /**
@@ -208,7 +231,10 @@ function parseSource(value: unknown, index: number): SourceConfig {
     throw new ConfigValidationError(`sources[${index}].id must be a 32-character hex Notion id`);
   }
 
-  const output = assertString(source["output"], `sources[${index}].output`);
+  const output = assertRelativeOutputPath(
+    assertString(source["output"], `sources[${index}].output`),
+    `sources[${index}].output`
+  );
   const name = assertOptionalString(source["name"], `sources[${index}].name`);
   const include = assertStringArray(source["include"], `sources[${index}].include`);
   const exclude = assertStringArray(source["exclude"], `sources[${index}].exclude`);
@@ -244,6 +270,15 @@ export function validateConfig(raw: unknown): ConfigFile {
   }
 
   const sources = sourcesRaw.map((source, index) => parseSource(source, index));
+
+  const seenOutputs = new Set<string>();
+  for (const source of sources) {
+    if (seenOutputs.has(source.output)) {
+      throw new ConfigValidationError(`Duplicate source output path: ${source.output}`);
+    }
+    seenOutputs.add(source.output);
+  }
+
   const output = assertOptionalString(config["output"], "output") ?? "./docs";
   const concurrency = assertOptionalNumber(config["concurrency"], "concurrency");
   const retry = parseRetry(config["retry"]);
@@ -251,8 +286,10 @@ export function validateConfig(raw: unknown): ConfigFile {
   const defaultDateFilter = parseDateFilter(config["defaultDateFilter"], "defaultDateFilter");
 
   for (const selector of defaultExclude ?? []) {
-    if (isNotionId(selector) && !NOTION_ID_PATTERN.test(normalizeNotionId(selector))) {
-      throw new ConfigValidationError(`Invalid Notion id in defaultExclude: ${selector}`);
+    if (isNotionId(selector)) {
+      throw new ConfigValidationError(
+        `defaultExclude does not support Notion id selectors (only title-path globs): ${selector}`
+      );
     }
   }
 

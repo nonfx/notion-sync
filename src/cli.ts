@@ -5,9 +5,10 @@
  * Sync Notion pages to local markdown files.
  */
 
+import { existsSync } from "node:fs";
 import { parseArgs } from "util";
 import { version } from "../package.json";
-import { syncFromConfig } from "./config/load.ts";
+import { discoverConfigPath, syncFromConfig } from "./config/load.ts";
 import { sync } from "./sync/engine.ts";
 import { partialSync } from "./sync/partial.ts";
 import { push } from "./sync/push.ts";
@@ -136,9 +137,12 @@ async function main(): Promise<void> {
       }
 
       case "sync": {
-        if (options.config) {
+        const defaultConfigPath = discoverConfigPath({});
+        const configPath =
+          options.config ?? (existsSync(defaultConfigPath) ? defaultConfigPath : undefined);
+        if (configPath) {
           await syncFromConfig({
-            configPath: options.config,
+            configPath,
             notionToken: notionToken!,
             dryRun: options.dryRun,
           });

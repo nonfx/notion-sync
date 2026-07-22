@@ -3,7 +3,7 @@
 **Status:** 🟢 Implemented (config file + selectors + date filtering)
 **Last updated:** Jul 21, 2026
 **Fork:** `crimsonsunset/notion-rsync` (parent `nonfx/notion-sync`), branch TBD off `master` (v0.2.0)
-**Scope:** Add a user-facing config file that declares multiple Notion roots and per-root include/exclude selectors (by ID or title glob), with pruning applied at tree-build time so excluded subtrees are never crawled. Targets upstream `TODO.md` Phase 2.6 ("Selective sync (include/exclude patterns)"), currently unchecked.
+**Scope:** Add a user-facing config file that declares multiple Notion roots and per-root include/exclude selectors (by ID or title glob), with pruning applied at tree-build time so excluded subtrees are never crawled. Targets upstream `TODO.md` Phase 2.6 ("Selective sync (include/exclude patterns)").
 **Related:** [jsg-tech-check `rivendell-notion-sync-wiring-plan.md`](https://github.com/crimsonsunset/jsg-tech-check/blob/master/docs/planning/rivendell-notion-sync-wiring-plan.md) (the consumer — this feature unblocks its Phase 3 curated pull) · upstream `TODO.md` Phase 2.6 · `AGENTS.md` (repo stack + structure)
 
 ---
