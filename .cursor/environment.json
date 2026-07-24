@@ -1,0 +1,4 @@
+{
+  "repositoryDependencies": ["github.com/crimsonsunset/cursor-config"],
+  "install": "rm -rf /tmp/cursor-config && git clone --depth 1 https://github.com/crimsonsunset/cursor-config.git /tmp/cursor-config && node /tmp/cursor-config/scripts/tooling/install.js"
+}
