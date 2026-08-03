@@ -15,12 +15,18 @@ import { join } from "node:path";
 import { planSync, lookupPageState } from "../engine.ts";
 import type { SyncIndex } from "../index.ts";
 import { writePageTree, computeLinkMap } from "../../markdown/writer.ts";
+import { resolveNotionLinks, type LinkMap as LinkMapT } from "../../markdown/links.ts";
 import type { PageNode } from "../../notion/tree.ts";
 
 const T1 = "2026-08-01T10:00:00.000Z";
 const T2 = "2026-08-02T12:34:56.000Z";
 
-function node(id: string, title: string, lastEditedTime: string, children: PageNode[] = []): PageNode {
+function node(
+  id: string,
+  title: string,
+  lastEditedTime: string,
+  children: PageNode[] = []
+): PageNode {
   return { id, title, lastEditedTime, children, blocks: null };
 }
 
@@ -186,5 +192,74 @@ describe("writePageTree with skipIds", () => {
     for (const [id, result] of results) {
       expect(linkMap.get(id)).toBe(result.path);
     }
+  });
+});
+
+describe("planSync link-target cascade", () => {
+  const T1 = "2026-08-01T10:00:00.000Z";
+  const allExist = () => true;
+
+  it("re-renders a skipped page whose link target's path moved", () => {
+    // A links to B; B was renamed (path moves). A is otherwise unchanged but
+    // its rendered relative link to B is now stale — it must re-render.
+    const nodes = [node("aaaa", "A", T1), node("bbbb", "B renamed", T1)];
+    const index = indexWith({
+      aaaa: { path: "a.md", title: "A", lastEdited: T1, links: ["bbbb"] },
+      bbbb: { path: "b.md", title: "B", lastEdited: T1 },
+    });
+    const paths: Record<string, string> = { aaaa: "a.md", bbbb: "b-renamed.md" };
+
+    const plan = planSync(nodes, index, (id) => paths[id], allExist);
+
+    expect(plan.changedIds.has("aaaa")).toBe(true);
+    expect(plan.changedIds.has("bbbb")).toBe(true);
+    expect(plan.unchangedIds.size).toBe(0);
+  });
+
+  it("re-renders a skipped page when a previously-unresolved link target appears", () => {
+    // A linked to a page that didn't exist at last sync (link stayed a raw
+    // notion:// URL). The target exists now — A must re-render to resolve it.
+    const nodes = [node("aaaa", "A", T1), node("cccc", "New target", T1)];
+    const index = indexWith({
+      aaaa: { path: "a.md", title: "A", lastEdited: T1, links: ["cccc"] },
+    });
+    const paths: Record<string, string> = { aaaa: "a.md", cccc: "new-target.md" };
+
+    const plan = planSync(nodes, index, (id) => paths[id], allExist);
+
+    expect(plan.changedIds.has("aaaa")).toBe(true);
+  });
+
+  it("keeps the skip when all link targets are stable", () => {
+    const nodes = [node("aaaa", "A", T1), node("bbbb", "B", T1)];
+    const index = indexWith({
+      aaaa: { path: "a.md", title: "A", lastEdited: T1, links: ["bbbb"] },
+      bbbb: { path: "b.md", title: "B", lastEdited: T1 },
+    });
+    const paths: Record<string, string> = { aaaa: "a.md", bbbb: "b.md" };
+
+    const plan = planSync(nodes, index, (id) => paths[id], allExist);
+
+    expect(plan.unchangedIds.has("aaaa")).toBe(true);
+    expect(plan.unchangedIds.has("bbbb")).toBe(true);
+  });
+});
+
+describe("resolveNotionLinks link collection", () => {
+  it("collects normalized IDs for resolved and unresolved links", () => {
+    const linkMap: LinkMapT = new Map([["bbbb", "b.md"]]);
+    const collected = new Set<string>();
+
+    const out = resolveNotionLinks(
+      "See [B](notion://bbbb) and [missing](notion://cccc-dddd).",
+      "a.md",
+      linkMap,
+      collected
+    );
+
+    expect(collected.has("bbbb")).toBe(true);
+    expect(collected.has("ccccdddd")).toBe(true);
+    expect(out).toContain("./b.md");
+    expect(out).toContain("notion://cccc-dddd");
   });
 });

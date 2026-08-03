@@ -15,6 +15,12 @@ export interface WriteResult {
   title: string;
   /** False when the page was skipped as unchanged (incremental sync) */
   written: boolean;
+  /**
+   * Normalized IDs of every notion:// link in the written content. Only
+   * present for written pages; incremental sync stores these so a page is
+   * re-rendered when a link target's path changes.
+   */
+  links?: string[];
 }
 
 export interface WriterOptions {
@@ -175,8 +181,9 @@ async function writePageRecursive(
   // Convert to markdown
   const md = pageToMarkdown(page);
 
-  // Resolve notion:// links to local paths
-  const resolvedContent = resolveNotionLinks(md.content, relativePath, linkMap);
+  // Resolve notion:// links to local paths, recording the link targets
+  const linkedIds = new Set<string>();
+  const resolvedContent = resolveNotionLinks(md.content, relativePath, linkMap, linkedIds);
 
   if (dryRun) {
     log.info(`[dry-run] Would write: ${filePath}`);
@@ -191,6 +198,7 @@ async function writePageRecursive(
     path: relativePath,
     title: page.title,
     written: true,
+    links: [...linkedIds].toSorted(),
   });
 }
 

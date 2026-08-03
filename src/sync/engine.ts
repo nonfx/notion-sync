@@ -87,6 +87,26 @@ export function planSync(
     }
   }
 
+  // Second pass: a page's rendered content embeds relative paths to the pages
+  // it links to, so a skipped page goes stale when a link target moved (or a
+  // previously-unresolvable target now exists). Demote those to changed.
+  // (Deleting the current entry while iterating a Set is well-defined.)
+  for (const normId of unchangedIds) {
+    const oldState = lookupPageState(index, normId);
+    if (!oldState?.links?.length) continue;
+
+    const linkTargetMoved = oldState.links.some((linkId) => {
+      const oldTargetPath = lookupPageState(index, linkId)?.path;
+      const newTargetPath = pathFor(linkId);
+      return oldTargetPath !== newTargetPath;
+    });
+
+    if (linkTargetMoved) {
+      unchangedIds.delete(normId);
+      changedIds.add(normId);
+    }
+  }
+
   return { changedIds, unchangedIds, newCount };
 }
 
@@ -184,6 +204,7 @@ export async function sync(options: SyncOptions): Promise<void> {
         path: result.path,
         title: result.title,
         lastEdited: lastEditedById.get(normalizeId(pageId)) ?? new Date().toISOString(),
+        ...(result.links?.length ? { links: result.links } : {}),
       };
     } else {
       const oldState = lookupPageState(index, pageId);
