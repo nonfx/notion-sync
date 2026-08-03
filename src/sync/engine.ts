@@ -2,18 +2,99 @@
  * Sync engine - orchestrates the sync process
  */
 
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../utils/logger.ts";
 import { createNotionClient } from "../notion/client.ts";
-import { buildTree, fetchAllBlocks, countPages } from "../notion/tree.ts";
-import { writePageTree } from "../markdown/writer.ts";
+import {
+  buildTree,
+  fetchAllBlocks,
+  fetchBlocksFiltered,
+  countPages,
+  flattenTree,
+  type PageNode,
+} from "../notion/tree.ts";
+import { writePageTree, computeLinkMap } from "../markdown/writer.ts";
 import { loadIndex, writeIndex, type SyncIndex, type PageState } from "./index.ts";
 
 export interface SyncOptions {
   outputDir: string;
   notionToken: string;
   dryRun: boolean;
+  /** Re-fetch every page even if it looks unchanged */
+  force?: boolean;
+}
+
+const normalizeId = (id: string): string => id.replace(/-/g, "");
+
+/** How the planner classified each page */
+export interface SyncPlan {
+  /** Normalized IDs that need their content fetched and rewritten */
+  changedIds: Set<string>;
+  /** Normalized IDs that are up to date and can be skipped entirely */
+  unchangedIds: Set<string>;
+  newCount: number;
+}
+
+/**
+ * Decide which pages actually need fetching. A page is skippable only when
+ * every cheap signal says nothing moved:
+ *
+ *   - the index has an entry for it,
+ *   - the page's real last_edited_time matches the index,
+ *   - its title matches (a rename changes its slug and its parents' links),
+ *   - it would be written to the same path as last time (a renamed ancestor
+ *     moves the whole subtree even when the page itself didn't change),
+ *   - the file actually exists on disk.
+ *
+ * Anything else re-fetches. Pre-incremental indexes stamped lastEdited with
+ * the sync time, so their first incremental run re-fetches everything once
+ * and heals the index.
+ */
+export function planSync(
+  nodes: PageNode[],
+  index: SyncIndex,
+  pathFor: (id: string) => string | undefined,
+  fileExists: (relPath: string) => boolean
+): SyncPlan {
+  const changedIds = new Set<string>();
+  const unchangedIds = new Set<string>();
+  let newCount = 0;
+
+  for (const node of nodes) {
+    const normId = normalizeId(node.id);
+    const oldState = lookupPageState(index, node.id);
+
+    if (!oldState) {
+      newCount++;
+      changedIds.add(normId);
+      continue;
+    }
+
+    const newPath = pathFor(node.id);
+    const unchanged =
+      oldState.lastEdited === node.lastEditedTime &&
+      oldState.title === node.title &&
+      newPath !== undefined &&
+      oldState.path === newPath &&
+      fileExists(newPath);
+
+    if (unchanged) {
+      unchangedIds.add(normId);
+    } else {
+      changedIds.add(normId);
+    }
+  }
+
+  return { changedIds, unchangedIds, newCount };
+}
+
+/** Index entries may be keyed with or without dashes — try both */
+export function lookupPageState(index: SyncIndex, pageId: string): PageState | undefined {
+  const normId = normalizeId(pageId);
+  const dashedId = normId.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+  return index.pages[pageId] ?? index.pages[normId] ?? index.pages[dashedId];
 }
 
 export async function sync(options: SyncOptions): Promise<void> {
@@ -35,38 +116,83 @@ export async function sync(options: SyncOptions): Promise<void> {
   // 2. Create Notion client
   const client = createNotionClient({ token: options.notionToken });
 
-  // 3. Build page tree
+  // 3. Build page tree (metadata only — this is the cheap listing pass, and
+  //    it carries each page's real last_edited_time)
   log.info("Building page tree...");
   const tree = await buildTree(client, index.rootPageId);
   const pageCount = countPages(tree);
   log.info(`Found ${pageCount} pages`);
 
-  // 4. Fetch all blocks
-  log.info("Fetching page content...");
-  const treeWithBlocks = await fetchAllBlocks(client, tree);
+  // 4. Plan: diff the tree against the index and only fetch what moved
+  const nodes = flattenTree(tree);
+  const linkMap = computeLinkMap(tree, options.outputDir);
+  const plan = options.force
+    ? null
+    : planSync(
+        nodes,
+        index,
+        (id) => linkMap.get(id) ?? linkMap.get(normalizeId(id)),
+        (relPath) => existsSync(join(options.outputDir, relPath))
+      );
 
-  // 5. Convert to markdown and write files
+  // 5. Fetch blocks — all of them under --force, otherwise only changed pages
+  let treeWithBlocks: PageNode;
+  if (!plan) {
+    log.info(`Fetching page content (all ${pageCount} pages, --force)...`);
+    treeWithBlocks = await fetchAllBlocks(client, tree);
+  } else if (plan.changedIds.size === 0) {
+    log.info("Everything up to date — nothing to fetch.");
+    treeWithBlocks = tree;
+  } else {
+    log.info(
+      `Fetching page content (${plan.changedIds.size} changed` +
+        `${plan.newCount > 0 ? `, ${plan.newCount} new` : ""}, ` +
+        `${plan.unchangedIds.size} unchanged skipped)...`
+    );
+    treeWithBlocks = await fetchBlocksFiltered(client, tree, plan.changedIds);
+  }
+
+  // 6. Convert to markdown and write files (skipping unchanged pages)
   log.info("Writing markdown files...");
   const results = await writePageTree(treeWithBlocks, {
     outputDir: options.outputDir,
     dryRun: options.dryRun,
+    skipIds: plan?.unchangedIds,
   });
 
-  log.info(`Processed ${results.size} pages`);
+  const writtenCount = [...results.values()].filter((r) => r.written).length;
+  log.info(`Processed ${results.size} pages (${writtenCount} written)`);
 
   if (options.dryRun) {
     log.info("Dry run complete - no files written");
     return;
   }
 
-  // 6. Update index with new page states
+  // 7. Update index with new page states. Written pages record the page's
+  //    real last_edited_time (NOT the sync time — stamping sync time is what
+  //    used to make incremental diffing impossible); skipped pages carry
+  //    their existing state forward.
+  const lastEditedById = new Map<string, string>();
+  for (const node of nodes) {
+    lastEditedById.set(normalizeId(node.id), node.lastEditedTime);
+  }
+
   const pages: Record<string, PageState> = {};
   for (const [pageId, result] of results) {
-    pages[pageId] = {
-      path: result.path,
-      title: result.title,
-      lastEdited: new Date().toISOString(),
-    };
+    if (result.written) {
+      pages[pageId] = {
+        path: result.path,
+        title: result.title,
+        lastEdited: lastEditedById.get(normalizeId(pageId)) ?? new Date().toISOString(),
+      };
+    } else {
+      const oldState = lookupPageState(index, pageId);
+      pages[pageId] = oldState ?? {
+        path: result.path,
+        title: result.title,
+        lastEdited: lastEditedById.get(normalizeId(pageId)) ?? new Date().toISOString(),
+      };
+    }
   }
 
   const updatedIndex: SyncIndex = {
@@ -76,7 +202,7 @@ export async function sync(options: SyncOptions): Promise<void> {
   };
   await writeIndex(options.outputDir, updatedIndex);
 
-  // 7. Remove stale files (pages deleted in Notion)
+  // 8. Remove stale files (pages deleted in Notion)
   const stalePageIds = findStalePages(index.pages, pages);
   if (stalePageIds.length > 0) {
     log.info(`Removing ${stalePageIds.length} stale files...`);
@@ -87,15 +213,17 @@ export async function sync(options: SyncOptions): Promise<void> {
 }
 
 /**
- * Find page IDs that exist in old index but not in new results
+ * Find page IDs that exist in old index but not in new results.
+ * Key formats may differ between index generations, so compare normalized.
  */
 function findStalePages(
   oldPages: Record<string, PageState>,
   newPages: Record<string, PageState>
 ): string[] {
+  const newIds = new Set(Object.keys(newPages).map(normalizeId));
   const stale: string[] = [];
   for (const pageId of Object.keys(oldPages)) {
-    if (!(pageId in newPages)) {
+    if (!newIds.has(normalizeId(pageId))) {
       stale.push(pageId);
     }
   }
