@@ -12,6 +12,13 @@ export interface PageState {
   path: string;
   title: string;
   lastEdited: string;
+  /**
+   * Normalized IDs of the notion:// links in the page's rendered content.
+   * Used by incremental sync to re-render a page when a link target's path
+   * changes. Absent on pre-incremental indexes (which re-fetch everything
+   * once anyway).
+   */
+  links?: string[];
 }
 
 export interface SyncIndex {

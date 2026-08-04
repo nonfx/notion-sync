@@ -101,7 +101,9 @@ export async function partialSync(options: PartialSyncOptions): Promise<void> {
       index.pages[indexKey] = {
         path: filePath,
         title,
-        lastEdited: new Date().toISOString(),
+        // The page's real edit time, not the sync time — incremental sync
+        // diffs against this.
+        lastEdited: lastEditedTime,
       };
 
       synced++;

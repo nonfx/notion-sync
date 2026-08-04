@@ -33,6 +33,7 @@ OPTIONS:
   -p, --pages <ids>     Sync only specific page IDs (comma-separated)
   -v, --verbose         Enable verbose logging
   -n, --dry-run         Show what would be synced without making changes
+  -f, --force           Re-fetch every page even if it looks unchanged
   -h, --help            Show this help message
   --version             Show version
 
@@ -51,6 +52,7 @@ interface CLIOptions {
   output: string;
   verbose: boolean;
   dryRun: boolean;
+  force: boolean;
   help: boolean;
   version: boolean;
   pages: string | undefined;
@@ -63,6 +65,7 @@ function parseArguments(): { command: string; args: string[]; options: CLIOption
       output: { type: "string", short: "o", default: "./docs" },
       verbose: { type: "boolean", short: "v", default: false },
       "dry-run": { type: "boolean", short: "n", default: false },
+      force: { type: "boolean", short: "f", default: false },
       pages: { type: "string", short: "p" },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", default: false },
@@ -77,6 +80,7 @@ function parseArguments(): { command: string; args: string[]; options: CLIOption
       output: values.output ?? "./docs",
       verbose: values.verbose ?? false,
       dryRun: values["dry-run"] ?? false,
+      force: values.force ?? false,
       pages: values.pages,
       help: values.help ?? false,
       version: values.version ?? false,
@@ -143,6 +147,7 @@ async function main(): Promise<void> {
             outputDir: options.output,
             notionToken: notionToken!,
             dryRun: options.dryRun,
+            force: options.force,
           });
         }
         break;

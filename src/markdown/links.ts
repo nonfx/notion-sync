@@ -13,12 +13,16 @@ export type LinkMap = Map<string, string>;
  * @param content - Markdown content with notion:// URLs
  * @param currentFilePath - Path of the current file (relative to output dir)
  * @param linkMap - Map of Notion IDs to file paths
+ * @param outLinkedIds - When provided, collects the normalized ID of every
+ *   notion:// link encountered (resolved or not). Incremental sync stores
+ *   these so a page can be re-rendered when a link target's path changes.
  * @returns Content with resolved links
  */
 export function resolveNotionLinks(
   content: string,
   currentFilePath: string,
-  linkMap: LinkMap
+  linkMap: LinkMap,
+  outLinkedIds?: Set<string>
 ): string {
   // Match notion:// URLs (with or without dashes in UUID)
   // Format: notion://uuid or notion://uuid-with-dashes
@@ -27,6 +31,7 @@ export function resolveNotionLinks(
   return content.replace(notionUrlPattern, (match, notionId) => {
     // Normalize ID (remove dashes for lookup)
     const normalizedId = notionId.replace(/-/g, "");
+    outLinkedIds?.add(normalizedId);
 
     // Try both formats
     let targetPath = linkMap.get(notionId) || linkMap.get(normalizedId);
