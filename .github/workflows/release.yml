@@ -1,6 +1,7 @@
 name: Release
 
-# Publishes to npm on a version tag (e.g. v0.2.0) or a manual run.
+# Publishes to npm when a version bump lands on main (merge a PR that changes
+# the version in package.json), on a version tag (e.g. v0.2.0), or a manual run.
 #
 # Auth: npm Trusted Publishing (OIDC) — https://docs.npmjs.com/trusted-publishers
 #   No NPM_TOKEN. GitHub Actions mints a short-lived OIDC credential that npm
@@ -23,6 +24,8 @@ name: Release
 
 on:
   push:
+    branches: [main]
+    paths: ["package.json"] # version bumps; non-bump changes are skipped by the already-published check
     tags:
       - "v*"
   workflow_dispatch: {}
@@ -72,9 +75,10 @@ jobs:
     name: Publish to npm
     needs: verify
     runs-on: ubuntu-latest
-    # Publish on a version tag, or on a manual run (workflow_dispatch) — the
-    # latter publishes whatever version is in package.json on the selected ref.
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+    # Publish on a push to main (version bump merged), a version tag, or a
+    # manual run (workflow_dispatch) — the latter publishes whatever version is
+    # in package.json on the selected ref.
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
     environment:
       name: release
       url: https://www.npmjs.com/package/notion-rsync
