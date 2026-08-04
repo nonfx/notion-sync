@@ -3,9 +3,10 @@
  */
 
 import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../utils/logger.ts";
+import type { EffectiveSelectors } from "../config/load.ts";
 import { createNotionClient } from "../notion/client.ts";
 import {
   buildTree,
@@ -16,7 +17,14 @@ import {
   type PageNode,
 } from "../notion/tree.ts";
 import { writePageTree, computeLinkMap } from "../markdown/writer.ts";
-import { loadIndex, writeIndex, type SyncIndex, type PageState } from "./index.ts";
+import {
+  INDEX_DIR,
+  createEmptyIndex,
+  loadIndex,
+  writeIndex,
+  type SyncIndex,
+  type PageState,
+} from "./index.ts";
 
 export interface SyncOptions {
   outputDir: string;
@@ -24,6 +32,11 @@ export interface SyncOptions {
   dryRun: boolean;
   /** Re-fetch every page even if it looks unchanged */
   force?: boolean;
+  /** Auto-create index when missing (config-driven multi-source sync). */
+  rootPageId?: string;
+  /** Per-source include/exclude selectors for build-time pruning. */
+  selectors?: EffectiveSelectors;
+  maxDepth?: number;
 }
 
 const normalizeId = (id: string): string => id.replace(/-/g, "");
@@ -117,6 +130,54 @@ export function lookupPageState(index: SyncIndex, pageId: string): PageState | u
   return index.pages[pageId] ?? index.pages[normId] ?? index.pages[dashedId];
 }
 
+/**
+ * Ensure a per-source sync index exists, creating one when absent.
+ */
+export async function ensureSyncIndex(outputDir: string, rootPageId: string): Promise<SyncIndex> {
+  const existing = await loadIndex(outputDir);
+  if (existing) {
+    if (existing.rootPageId !== rootPageId) {
+      throw new Error(
+        `Index rootPageId mismatch in ${outputDir}: index has ${existing.rootPageId}, config expects ${rootPageId}`
+      );
+    }
+    return existing;
+  }
+
+  await mkdir(outputDir, { recursive: true });
+  await mkdir(join(outputDir, INDEX_DIR), { recursive: true });
+
+  const index = createEmptyIndex(rootPageId);
+  await writeIndex(outputDir, index);
+  log.info(`Created sync index for root page ${rootPageId} in ${outputDir}`);
+
+  return index;
+}
+
+/**
+ * Load or create the sync index for a pull run.
+ */
+async function resolveSyncIndex(outputDir: string, rootPageId?: string): Promise<SyncIndex | null> {
+  const index = await loadIndex(outputDir);
+  if (index) {
+    if (rootPageId !== undefined && index.rootPageId !== rootPageId) {
+      throw new Error(
+        `Index rootPageId mismatch in ${outputDir}: index has ${index.rootPageId}, config expects ${rootPageId}`
+      );
+    }
+    return index;
+  }
+
+  if (rootPageId === undefined) {
+    return null;
+  }
+
+  return ensureSyncIndex(outputDir, rootPageId);
+}
+
+/**
+ * Pull Notion pages under a single root into one output directory.
+ */
 export async function sync(options: SyncOptions): Promise<void> {
   log.info(`Starting sync to ${options.outputDir}`);
 
@@ -125,7 +186,7 @@ export async function sync(options: SyncOptions): Promise<void> {
   }
 
   // 1. Load sync index
-  const index = await loadIndex(options.outputDir);
+  const index = await resolveSyncIndex(options.outputDir, options.rootPageId);
   if (!index) {
     log.error("No sync configuration found. Run 'notion-rsync init <page-id>' first.");
     return;
@@ -139,12 +200,14 @@ export async function sync(options: SyncOptions): Promise<void> {
   // 3. Build page tree (metadata only — this is the cheap listing pass, and
   //    it carries each page's real last_edited_time)
   log.info("Building page tree...");
-  const tree = await buildTree(client, index.rootPageId);
+  const treeOptions = options.selectors !== undefined ? { selectors: options.selectors } : {};
+  const tree = await buildTree(client, index.rootPageId, options.maxDepth ?? 10, treeOptions);
   const pageCount = countPages(tree);
   log.info(`Found ${pageCount} pages`);
 
-  // 4. Plan: diff the tree against the index and only fetch what moved
-  const nodes = flattenTree(tree);
+  // 4. Plan: diff the tree against the index and only fetch what moved.
+  //    Excluded nodes are never written or indexed, so they don't participate.
+  const nodes = flattenTree(tree).filter((node) => !node.excluded);
   const linkMap = computeLinkMap(tree, options.outputDir);
   const plan = options.force
     ? null

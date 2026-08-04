@@ -46,6 +46,25 @@ function createUnsupportedBlock(blockId: string, message: string): UnsupportedBl
   };
 }
 
+/** Default retry budget when config does not override */
+export const DEFAULT_RETRY_ATTEMPTS = 5;
+
+let retryAttempts = DEFAULT_RETRY_ATTEMPTS;
+
+/**
+ * Set the max retry count for rate-limited Notion API calls (config-driven runs).
+ */
+export function setRetryAttempts(attempts: number): void {
+  retryAttempts = attempts;
+}
+
+/**
+ * Reset retry budget to the built-in default (single-root sync).
+ */
+export function resetRetryAttempts(): void {
+  retryAttempts = DEFAULT_RETRY_ATTEMPTS;
+}
+
 export interface NotionClientOptions {
   token: string;
 }
@@ -63,7 +82,7 @@ export function createNotionClient(options: NotionClientOptions): Client {
  * Retry wrapper with exponential backoff for rate limits
  * Respects Retry-After header from Notion API
  */
-export async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttempts): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -263,6 +282,14 @@ export function getPageTitle(page: NotionPage): string {
   }
 
   return "Untitled";
+}
+
+/**
+ * Whether a Notion API error refers to a linked database view (not retrievable via databases.retrieve).
+ */
+export function isLinkedDatabaseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("linked database");
 }
 
 /**

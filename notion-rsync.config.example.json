@@ -1,0 +1,24 @@
+{
+  "output": "./notion-export",
+  "concurrency": 2,
+  "retry": {
+    "attempts": 6
+  },
+  "defaultExclude": ["**/Archive/**"],
+  "defaultDateFilter": { "after": "2025-01-01" },
+  "sources": [
+    {
+      "id": "d95e4b1bba544a1794a68c9005e4fa0a",
+      "name": "Professional TODOs",
+      "output": "professional-todos"
+    },
+    {
+      "id": "2df24584254b804094d3dfb56506b0be",
+      "name": "Sync2Hire",
+      "output": "sync2hire",
+      "exclude": ["**/Archive/**", "9ded838dec5c451498cc03000357ca50"],
+      "dateFilter": { "after": "2026-01-01" },
+      "maxDepth": 10
+    }
+  ]
+}

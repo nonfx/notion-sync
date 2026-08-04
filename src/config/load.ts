@@ -1,0 +1,398 @@
+/**
+ * Config discovery, parsing, name resolution, and effective selector computation.
+ */
+
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Client } from "@notionhq/client";
+import {
+  classifySelector,
+  validateConfig,
+  type ConfigFile,
+  type DateFilterConfig,
+  type ParsedSelector,
+  type SourceConfig,
+} from "./schema.ts";
+import {
+  createNotionClient,
+  fetchDatabase,
+  fetchPage,
+  getDatabaseTitle,
+  getPageTitle,
+  setRetryAttempts,
+  withRetry,
+  DEFAULT_RETRY_ATTEMPTS,
+} from "../notion/client.ts";
+import { setTreeConcurrency, DEFAULT_TREE_CONCURRENCY } from "../notion/tree.ts";
+import { sync, type SyncOptions } from "../sync/engine.ts";
+import { log } from "../utils/logger.ts";
+
+export const DEFAULT_CONFIG_FILENAME = "notion-rsync.config.json";
+
+/** Resolved selector set for one source with defaults kept separate for precedence */
+export interface EffectiveSelectors {
+  include: ParsedSelector[];
+  exclude: ParsedSelector[];
+  defaultExclude: ParsedSelector[];
+  dateFilter?: DateFilterConfig;
+}
+
+/** A source after id/name resolution and selector computation */
+export interface ResolvedSource {
+  id: string;
+  name: string;
+  output: string;
+  outputDir: string;
+  selectors: EffectiveSelectors;
+  maxDepth?: number;
+}
+
+/** Fully loaded and resolved config ready for orchestration */
+export interface ResolvedConfig {
+  configPath: string;
+  output: string;
+  concurrency?: number;
+  retry?: ConfigFile["retry"];
+  defaultExclude: ParsedSelector[];
+  defaultDateFilter?: DateFilterConfig;
+  sources: ResolvedSource[];
+}
+
+/** Error when a configured name cannot be resolved uniquely */
+export class NameResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NameResolutionError";
+  }
+}
+
+/** Injectable page title lookup for tests */
+export interface PageTitleResolver {
+  getTitle(pageId: string): Promise<string>;
+}
+
+export interface LoadConfigOptions {
+  configPath?: string;
+  cwd?: string;
+  titleResolver?: PageTitleResolver;
+}
+
+export interface ConfigSyncOptions {
+  configPath?: string;
+  cwd?: string;
+  notionToken: string;
+  dryRun: boolean;
+  titleResolver?: PageTitleResolver;
+  /** Injectable sync runner for tests. */
+  syncSource?: (options: SyncOptions) => Promise<void>;
+}
+
+/**
+ * Resolve the config file path from an explicit flag or cwd default.
+ */
+export function discoverConfigPath(options: { configPath?: string; cwd?: string }): string {
+  if (options.configPath) {
+    return options.configPath;
+  }
+
+  const cwd = options.cwd ?? process.cwd();
+  return join(cwd, DEFAULT_CONFIG_FILENAME);
+}
+
+/**
+ * Read and parse a config file from disk.
+ */
+export async function readConfigFile(configPath: string): Promise<unknown> {
+  let text: string;
+  try {
+    text = await readFile(configPath, "utf-8");
+  } catch {
+    throw new Error(`Config file not found: ${configPath}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Config file is not valid JSON: ${configPath}`);
+  }
+}
+
+/**
+ * Parse and validate config JSON.
+ */
+export function parseConfig(raw: unknown): ConfigFile {
+  return validateConfig(raw);
+}
+
+/**
+ * Intersect source and default date bounds (later after, earlier before).
+ */
+function intersectDateFilters(
+  source?: DateFilterConfig,
+  defaultFilter?: DateFilterConfig
+): DateFilterConfig | undefined {
+  const afterValues = [source?.after, defaultFilter?.after].filter(
+    (value): value is string => value !== undefined
+  );
+  const beforeValues = [source?.before, defaultFilter?.before].filter(
+    (value): value is string => value !== undefined
+  );
+
+  const after =
+    afterValues.length > 0
+      ? afterValues.reduce((latest, current) =>
+          Date.parse(current) > Date.parse(latest) ? current : latest
+        )
+      : undefined;
+
+  const before =
+    beforeValues.length > 0
+      ? beforeValues.reduce((earliest, current) =>
+          Date.parse(current) < Date.parse(earliest) ? current : earliest
+        )
+      : undefined;
+
+  if (after === undefined && before === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(after !== undefined ? { after } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
+}
+
+/**
+ * Build the effective include/exclude selector sets for one source.
+ */
+export function computeEffectiveSelectors(
+  source: SourceConfig,
+  defaultExclude: ParsedSelector[],
+  defaultDateFilter?: DateFilterConfig
+): EffectiveSelectors {
+  const dateFilter = intersectDateFilters(source.dateFilter, defaultDateFilter);
+
+  return {
+    include: (source.include ?? []).map(classifySelector),
+    exclude: (source.exclude ?? []).map(classifySelector),
+    defaultExclude,
+    ...(dateFilter !== undefined ? { dateFilter } : {}),
+  };
+}
+
+function createDefaultTitleResolver(client: Client): PageTitleResolver {
+  return {
+    async getTitle(rootId: string): Promise<string> {
+      try {
+        const page = await withRetry(() => fetchPage(client, rootId));
+        return getPageTitle(page);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("is a database")) {
+          throw error;
+        }
+
+        const database = await withRetry(() => fetchDatabase(client, rootId));
+        return getDatabaseTitle(database);
+      }
+    },
+  };
+}
+
+/**
+ * Resolve configured source names against Notion and compute effective selectors.
+ */
+export async function resolveConfig(
+  config: ConfigFile,
+  configPath: string,
+  titleResolver: PageTitleResolver
+): Promise<ResolvedConfig> {
+  const defaultExclude = (config.defaultExclude ?? []).map(classifySelector);
+  const defaultDateFilter = config.defaultDateFilter;
+  const namesBySource = new Map<string, string[]>();
+
+  const sources: ResolvedSource[] = [];
+
+  for (const source of config.sources) {
+    const title = await titleResolver.getTitle(source.id);
+
+    if (source.name !== undefined && source.name !== title) {
+      throw new NameResolutionError(
+        `Name mismatch for source ${source.id}: config name "${source.name}" does not match Notion title "${title}"`
+      );
+    }
+
+    const resolvedName = source.name ?? title;
+    const seenIds = namesBySource.get(resolvedName) ?? [];
+    seenIds.push(source.id);
+    namesBySource.set(resolvedName, seenIds);
+
+    sources.push({
+      id: source.id,
+      name: resolvedName,
+      output: source.output,
+      outputDir: join(config.output ?? "./docs", source.output),
+      selectors: computeEffectiveSelectors(source, defaultExclude, defaultDateFilter),
+      ...(source.maxDepth !== undefined ? { maxDepth: source.maxDepth } : {}),
+    });
+  }
+
+  for (const [name, ids] of namesBySource.entries()) {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length > 1) {
+      throw new NameResolutionError(
+        `Ambiguous name "${name}": resolves to multiple ids (${uniqueIds.join(", ")})`
+      );
+    }
+  }
+
+  return {
+    configPath,
+    output: config.output ?? "./docs",
+    ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
+    ...(config.retry !== undefined ? { retry: config.retry } : {}),
+    defaultExclude,
+    ...(defaultDateFilter !== undefined ? { defaultDateFilter } : {}),
+    sources,
+  };
+}
+
+/**
+ * Discover, read, validate, and resolve a config file.
+ */
+export async function loadConfig(
+  options: LoadConfigOptions & { notionToken: string }
+): Promise<ResolvedConfig> {
+  const configPath = discoverConfigPath(options);
+  const raw = await readConfigFile(configPath);
+  const config = parseConfig(raw);
+  const client = createNotionClient({ token: options.notionToken });
+  const titleResolver = options.titleResolver ?? createDefaultTitleResolver(client);
+  return resolveConfig(config, configPath, titleResolver);
+}
+
+/**
+ * Apply global crawl settings from a resolved config before sync.
+ */
+export function applyResolvedGlobals(resolved: ResolvedConfig): void {
+  setTreeConcurrency(resolved.concurrency ?? DEFAULT_TREE_CONCURRENCY);
+  setRetryAttempts(resolved.retry?.attempts ?? DEFAULT_RETRY_ATTEMPTS);
+}
+
+/**
+ * Format a selector list for dry-run output.
+ */
+function formatSelectorList(selectors: ParsedSelector[]): string {
+  return selectors.map((selector) => `${selector.raw} [${selector.kind}]`).join(", ");
+}
+
+/**
+ * Format a date filter for dry-run output.
+ */
+function formatDateFilter(dateFilter: DateFilterConfig): string {
+  const parts: string[] = [];
+
+  if (dateFilter.after !== undefined) {
+    parts.push(`after ${dateFilter.after}`);
+  }
+
+  if (dateFilter.before !== undefined) {
+    parts.push(`before ${dateFilter.before}`);
+  }
+
+  return parts.join(", ");
+}
+
+/**
+ * Format a resolved config plan for dry-run output.
+ */
+export function formatResolvedPlan(resolved: ResolvedConfig): string {
+  const concurrency = resolved.concurrency ?? DEFAULT_TREE_CONCURRENCY;
+  const retryAttempts = resolved.retry?.attempts ?? DEFAULT_RETRY_ATTEMPTS;
+
+  const lines: string[] = [
+    `Config: ${resolved.configPath}`,
+    `Output root: ${resolved.output}`,
+    `Concurrency: ${concurrency}`,
+    `Retry attempts: ${retryAttempts}`,
+  ];
+
+  if (resolved.defaultExclude.length > 0) {
+    lines.push(`Default exclude: ${formatSelectorList(resolved.defaultExclude)}`);
+  }
+
+  if (resolved.defaultDateFilter !== undefined) {
+    lines.push(`Default dateFilter: ${formatDateFilter(resolved.defaultDateFilter)}`);
+  }
+
+  lines.push("", "Sources:");
+
+  for (const source of resolved.sources) {
+    lines.push(`  - ${source.name} (${source.id})`);
+    lines.push(`    output: ${source.outputDir}`);
+
+    if (source.selectors.include.length > 0) {
+      lines.push(`    effective include: ${formatSelectorList(source.selectors.include)}`);
+    }
+
+    const effectiveExclude = [...source.selectors.exclude, ...source.selectors.defaultExclude];
+    if (effectiveExclude.length > 0) {
+      lines.push(`    effective exclude: ${formatSelectorList(effectiveExclude)}`);
+    }
+
+    if (source.maxDepth !== undefined) {
+      lines.push(`    maxDepth: ${source.maxDepth}`);
+    }
+
+    if (source.selectors.dateFilter !== undefined) {
+      lines.push(`    effective dateFilter: ${formatDateFilter(source.selectors.dateFilter)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Run the existing single-root pull for each resolved config source sequentially.
+ */
+export async function syncResolvedSources(
+  resolved: ResolvedConfig,
+  options: Pick<ConfigSyncOptions, "notionToken" | "dryRun" | "syncSource">
+): Promise<void> {
+  applyResolvedGlobals(resolved);
+  const runSync = options.syncSource ?? sync;
+
+  for (const source of resolved.sources) {
+    log.info(`Syncing source "${source.name}" (${source.id}) → ${source.outputDir}`);
+    await runSync({
+      outputDir: source.outputDir,
+      notionToken: options.notionToken,
+      dryRun: options.dryRun,
+      rootPageId: source.id,
+      selectors: source.selectors,
+      ...(source.maxDepth !== undefined ? { maxDepth: source.maxDepth } : {}),
+    });
+  }
+}
+
+/**
+ * Load config and sync each source into its own output subdir.
+ */
+export async function syncFromConfig(options: ConfigSyncOptions): Promise<void> {
+  const resolved = await loadConfig({
+    configPath: options.configPath,
+    cwd: options.cwd,
+    notionToken: options.notionToken,
+    titleResolver: options.titleResolver,
+  });
+
+  if (options.dryRun) {
+    console.log(formatResolvedPlan(resolved));
+    return;
+  }
+
+  log.info(
+    `Starting multi-source sync (${resolved.sources.length} source(s)) from ${resolved.configPath}`
+  );
+  await syncResolvedSources(resolved, options);
+  log.info("Multi-source sync complete!");
+}
