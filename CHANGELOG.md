@@ -2,12 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-04
 
 ### Added
 
-- **Config file + selective sync** - Declarative multi-root pulls via
-  `notion-rsync.config.json` and `notion-rsync sync --config <path>`.
+- **Config file + selective sync** (#4, thanks @crimsonsunset) - Declarative
+  multi-root pulls via `notion-rsync.config.json` and
+  `notion-rsync sync --config <path>`.
   - `sources[]`: each Notion root syncs into its own subdirectory under a
     global `output` path, with an independent `.notion-rsync/index.json`.
   - Per-source `include` / `exclude` selectors accept either a 32-hex Notion id
@@ -16,9 +17,38 @@ All notable changes to this project will be documented in this file.
   - Selectors prune during tree build (before child fetch), so excluded subtrees
     are not crawled. Include-override walks into an excluded parent when a
     descendant is explicitly included.
+  - Optional `dateFilter` / `defaultDateFilter` scope a source to pages by
+    `last_edited_time`.
   - Global `concurrency` and `retry.attempts` tune crawl parallelism and rate-limit
     retries. Dry-run (`-n`) prints the resolved plan per source.
   - Example config: `notion-rsync.config.example.json`.
+
+- **Incremental pull** (#6) - `sync` now diffs each page's real
+  `last_edited_time` against the sync index and only fetches block content for
+  pages that changed (or whose link targets moved). `--force` re-fetches
+  everything.
+
+### Fixed
+
+- **Table cell escaping** (`markdown/blocks.ts`) - Escape backslashes before
+  pipes/newlines in table cells so pre-existing backslashes aren't
+  double-escaped (CodeQL: incomplete string escaping).
+- **Notion append safety** (`notion/writer.ts`) - Fail loudly instead of
+  silently dropping deferred child blocks when an append returns fewer blocks
+  than requested.
+- **Bun file I/O** (`local/scan.ts`) - Read file contents via
+  `Bun.file().text()` per the project's file-I/O guideline.
+
+### Changed
+
+- **CI: publish on version-bump merges** - The release workflow now also runs
+  on pushes to `main` that touch `package.json`, so merging a version-bump PR
+  publishes automatically (no manual tag needed). Merges without a bump are
+  no-ops thanks to the already-published check.
+
+## [0.2.0] - 2026-06-10
+
+### Added
 
 - **Two-way sync (`push`)** - Push local markdown back up to Notion. Mirrors the
   folder hierarchy as a Notion page hierarchy and re-creates internal `.md`
