@@ -1,6 +1,6 @@
 {
   "name": "notion-rsync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Rsync for Notion - Sync Notion pages to local markdown files",
   "type": "module",
   "main": "dist/cli.js",
