@@ -284,10 +284,9 @@ async function findNestedDatabases(client: Client, blockId: string): Promise<str
   async function scanBlock(id: string): Promise<void> {
     let blocks;
     try {
-      blocks = await withRetry(() =>
-        collectPaginatedAPI(client.blocks.children.list, {
-          block_id: id,
-        })
+      blocks = await collectPaginatedAPI(
+        (args) => withRetry(() => client.blocks.children.list(args)),
+        { block_id: id }
       );
     } catch (err) {
       throw new Error(`Could not scan block ${id} for nested databases under ${blockId}`, {

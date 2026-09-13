@@ -20,7 +20,9 @@ import {
   getDatabaseTitle,
   getPageTitle,
   setRetryAttempts,
-  withRetry,
+  setRequestLimits,
+  DEFAULT_REQUEST_INTERVAL_MS,
+  DEFAULT_REQUEST_CONCURRENCY,
   DEFAULT_RETRY_ATTEMPTS,
 } from "../notion/client.ts";
 import { setTreeConcurrency, DEFAULT_TREE_CONCURRENCY } from "../notion/tree.ts";
@@ -52,6 +54,7 @@ export interface ResolvedConfig {
   configPath: string;
   output: string;
   concurrency?: number;
+  requestIntervalMs?: number;
   retry?: ConfigFile["retry"];
   defaultExclude: ParsedSelector[];
   defaultDateFilter?: DateFilterConfig;
@@ -183,7 +186,7 @@ function createDefaultTitleResolver(client: Client): PageTitleResolver {
   return {
     async getTitle(rootId: string): Promise<string> {
       try {
-        const page = await withRetry(() => fetchPage(client, rootId));
+        const page = await fetchPage(client, rootId);
         return getPageTitle(page);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -191,7 +194,7 @@ function createDefaultTitleResolver(client: Client): PageTitleResolver {
           throw error;
         }
 
-        const database = await withRetry(() => fetchDatabase(client, rootId));
+        const database = await fetchDatabase(client, rootId);
         return getDatabaseTitle(database);
       }
     },
@@ -249,6 +252,9 @@ export async function resolveConfig(
     configPath,
     output: config.output ?? "./docs",
     ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
+    ...(config.requestIntervalMs !== undefined
+      ? { requestIntervalMs: config.requestIntervalMs }
+      : {}),
     ...(config.retry !== undefined ? { retry: config.retry } : {}),
     defaultExclude,
     ...(defaultDateFilter !== undefined ? { defaultDateFilter } : {}),
@@ -265,15 +271,22 @@ export async function loadConfig(
   const configPath = discoverConfigPath(options);
   const raw = await readConfigFile(configPath);
   const config = parseConfig(raw);
+  applyResolvedGlobals(config);
   const client = createNotionClient({ token: options.notionToken });
   const titleResolver = options.titleResolver ?? createDefaultTitleResolver(client);
   return resolveConfig(config, configPath, titleResolver);
 }
 
 /**
- * Apply global crawl settings from a resolved config before sync.
+ * Apply request limits before source resolution and sync.
  */
-export function applyResolvedGlobals(resolved: ResolvedConfig): void {
+export function applyResolvedGlobals(
+  resolved: Pick<ResolvedConfig, "concurrency" | "requestIntervalMs" | "retry">
+): void {
+  setRequestLimits({
+    concurrency: resolved.concurrency ?? DEFAULT_REQUEST_CONCURRENCY,
+    minIntervalMs: resolved.requestIntervalMs ?? DEFAULT_REQUEST_INTERVAL_MS,
+  });
   setTreeConcurrency(resolved.concurrency ?? DEFAULT_TREE_CONCURRENCY);
   setRetryAttempts(resolved.retry?.attempts ?? DEFAULT_RETRY_ATTEMPTS);
 }
@@ -313,6 +326,7 @@ export function formatResolvedPlan(resolved: ResolvedConfig): string {
     `Config: ${resolved.configPath}`,
     `Output root: ${resolved.output}`,
     `Concurrency: ${concurrency}`,
+    `Request interval: ${resolved.requestIntervalMs ?? DEFAULT_REQUEST_INTERVAL_MS} ms`,
     `Retry attempts: ${retryAttempts}`,
   ];
 

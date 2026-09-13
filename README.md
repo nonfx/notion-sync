@@ -229,11 +229,16 @@ Single-root `init` / `sync --output` still works; config-driven sync is an alter
 | Field | Required | Description |
 |-------|----------|-------------|
 | `output` | No | Global output root (default: `./docs`) |
-| `concurrency` | No | Parallel Notion API requests during tree build (default: `2`) |
+| `concurrency` | No | Maximum in-flight Notion API requests and parallel sibling pages (default: `2`) |
+| `requestIntervalMs` | No | Minimum interval between Notion API request starts, including retries (default: `334` ms) |
 | `retry.attempts` | No | Max retry attempts on rate limits (default: `5`) |
 | `defaultExclude` | No | Glob selectors applied to every source's exclude set |
 | `defaultDateFilter` | No | Global date range on `last_edited_time`; intersects with per-source `dateFilter` |
 | `sources` | Yes | Non-empty array of Notion roots to pull |
+
+All reads, writes, pagination requests, and retries share these limits within one process.
+The default interval follows [Notion’s average limit of three requests per second](https://developers.notion.com/reference/request-limits).
+Separate processes do not share limits. Notion can still return rate-limit errors; retries honor `Retry-After`.
 
 Each `sources[]` entry:
 
@@ -291,6 +296,7 @@ See [`notion-rsync.config.example.json`](notion-rsync.config.example.json):
 {
   "output": "./notion-export",
   "concurrency": 2,
+  "requestIntervalMs": 334,
   "retry": { "attempts": 6 },
   "defaultExclude": ["**/Archive/**"],
   "defaultDateFilter": { "after": "2025-01-01" },
@@ -311,7 +317,7 @@ See [`notion-rsync.config.example.json`](notion-rsync.config.example.json):
 }
 ```
 
-Dry-run prints the resolved plan (output paths, effective include/exclude, date ranges, concurrency, retry):
+Dry-run prints the resolved plan (output paths, effective include/exclude, date ranges, concurrency, request interval, retry):
 
 ```bash
 notion-rsync sync --config notion-rsync.config.json -n

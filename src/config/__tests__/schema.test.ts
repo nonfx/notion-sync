@@ -31,6 +31,7 @@ describe("validateConfig", () => {
     const config = validateConfig({
       output: "./notion-export",
       concurrency: 2,
+      requestIntervalMs: 500,
       retry: { attempts: 6 },
       defaultExclude: ["**/Archive/**"],
       sources: [
@@ -46,10 +47,23 @@ describe("validateConfig", () => {
 
     expect(config.output).toBe("./notion-export");
     expect(config.concurrency).toBe(2);
+    expect(config.requestIntervalMs).toBe(500);
     expect(config.retry?.attempts).toBe(6);
     expect(config.defaultExclude).toEqual(["**/Archive/**"]);
     expect(config.sources[0]?.maxDepth).toBe(4);
   });
+
+  it.each([0, -1, Infinity, NaN, "334", null])(
+    "rejects invalid request intervals: %p",
+    (requestIntervalMs) => {
+      expect(() =>
+        validateConfig({
+          requestIntervalMs,
+          sources: [{ id: "d95e4b1bba544a1794a68c9005e4fa0a", output: "x" }],
+        })
+      ).toThrow("requestIntervalMs must be a positive number");
+    }
+  );
 
   it("rejects configs without sources", () => {
     expect(() => validateConfig({})).toThrow(ConfigValidationError);

@@ -1,6 +1,7 @@
 {
   "output": "./notion-export",
   "concurrency": 2,
+  "requestIntervalMs": 334,
   "retry": {
     "attempts": 6
   },
