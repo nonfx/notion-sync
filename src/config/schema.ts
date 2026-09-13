@@ -34,6 +34,7 @@ export interface SourceConfig {
 export interface ConfigFile {
   output?: string;
   concurrency?: number;
+  requestIntervalMs?: number;
   retry?: RetryConfig;
   defaultExclude?: string[];
   defaultDateFilter?: DateFilterConfig;
@@ -281,6 +282,7 @@ export function validateConfig(raw: unknown): ConfigFile {
 
   const output = assertOptionalString(config["output"], "output") ?? "./docs";
   const concurrency = assertOptionalNumber(config["concurrency"], "concurrency");
+  const requestIntervalMs = assertOptionalNumber(config["requestIntervalMs"], "requestIntervalMs");
   const retry = parseRetry(config["retry"]);
   const defaultExclude = assertStringArray(config["defaultExclude"], "defaultExclude");
   const defaultDateFilter = parseDateFilter(config["defaultDateFilter"], "defaultDateFilter");
@@ -296,6 +298,7 @@ export function validateConfig(raw: unknown): ConfigFile {
   return {
     output,
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(requestIntervalMs !== undefined ? { requestIntervalMs } : {}),
     ...(retry !== undefined ? { retry } : {}),
     ...(defaultExclude !== undefined ? { defaultExclude } : {}),
     ...(defaultDateFilter !== undefined ? { defaultDateFilter } : {}),

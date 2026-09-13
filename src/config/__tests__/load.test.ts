@@ -2,8 +2,15 @@
  * Tests for config loading, name resolution, and effective selectors.
  */
 
-import { describe, it, expect } from "bun:test";
+import { afterEach, describe, it, expect } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resetRequestLimits, resetRetryAttempts, withRetry } from "../../notion/client.ts";
+import { resetTreeConcurrency } from "../../notion/tree.ts";
 import {
+  applyResolvedGlobals,
+  loadConfig,
   computeEffectiveSelectors,
   discoverConfigPath,
   formatResolvedPlan,
@@ -288,5 +295,79 @@ describe("syncResolvedSources", () => {
         rootPageId: PAGE_B,
       },
     ]);
+  });
+});
+
+describe("request settings", () => {
+  afterEach(() => {
+    resetRequestLimits();
+    resetRetryAttempts();
+    resetTreeConcurrency();
+  });
+
+  async function observeRequests(durationMs: number): Promise<{ starts: number[]; peak: number }> {
+    const starts: number[] = [];
+    let active = 0;
+    let peak = 0;
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        withRetry(async () => {
+          starts.push(performance.now());
+          active++;
+          peak = Math.max(peak, active);
+          await Bun.sleep(durationMs);
+          active--;
+        })
+      )
+    );
+    return { starts, peak };
+  }
+
+  it("applies config limits before title lookup and retains them for sync", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "notion-config-limits-"));
+    try {
+      const configPath = join(dir, "config.json");
+      await Bun.write(
+        configPath,
+        JSON.stringify({
+          concurrency: 1,
+          requestIntervalMs: 400,
+          sources: [{ id: PAGE_A, output: "docs" }],
+        })
+      );
+      const resolved = await loadConfig({
+        configPath,
+        notionToken: "test-token",
+        titleResolver: {
+          async getTitle() {
+            const observed = await observeRequests(500);
+            expect(observed.peak).toBe(1);
+            return "Docs";
+          },
+        },
+      });
+      expect(formatResolvedPlan(resolved)).toContain("Request interval: 400 ms");
+      resetRequestLimits();
+      await syncResolvedSources(resolved, {
+        notionToken: "test-token",
+        dryRun: false,
+        syncSource: async () => {
+          const observed = await observeRequests(1);
+          expect(observed.starts[1]! - observed.starts[0]!).toBeGreaterThanOrEqual(375);
+          expect(observed.starts[2]! - observed.starts[1]!).toBeGreaterThanOrEqual(375);
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores default pacing and concurrency when the next config omits them", async () => {
+    applyResolvedGlobals({ concurrency: 1, requestIntervalMs: 1 });
+    applyResolvedGlobals({});
+    const observed = await observeRequests(500);
+    expect(observed.peak).toBe(2);
+    expect(observed.starts[1]! - observed.starts[0]!).toBeGreaterThanOrEqual(300);
+    expect(observed.starts[2]! - observed.starts[1]!).toBeGreaterThanOrEqual(300);
   });
 });

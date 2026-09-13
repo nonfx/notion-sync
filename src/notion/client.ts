@@ -46,24 +46,17 @@ function createUnsupportedBlock(blockId: string, message: string): UnsupportedBl
   };
 }
 
-/** Default retry budget when config does not override */
-export const DEFAULT_RETRY_ATTEMPTS = 5;
-
-let retryAttempts = DEFAULT_RETRY_ATTEMPTS;
-
-/**
- * Set the max retry count for rate-limited Notion API calls (config-driven runs).
- */
-export function setRetryAttempts(attempts: number): void {
-  retryAttempts = attempts;
-}
-
-/**
- * Reset retry budget to the built-in default (single-root sync).
- */
-export function resetRetryAttempts(): void {
-  retryAttempts = DEFAULT_RETRY_ATTEMPTS;
-}
+import { withRetry } from "./requests.ts";
+export {
+  withRetry,
+  setRetryAttempts,
+  resetRetryAttempts,
+  DEFAULT_RETRY_ATTEMPTS,
+  setRequestLimits,
+  resetRequestLimits,
+  DEFAULT_REQUEST_CONCURRENCY,
+  DEFAULT_REQUEST_INTERVAL_MS,
+} from "./requests.ts";
 
 export interface NotionClientOptions {
   token: string;
@@ -76,67 +69,6 @@ export function createNotionClient(options: NotionClientOptions): Client {
   return new Client({
     auth: options.token,
   });
-}
-
-/**
- * Retry wrapper with exponential backoff for rate limits
- * Respects Retry-After header from Notion API
- */
-export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttempts): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      lastError = err;
-
-      // Check if it's a rate limit error
-      const isRateLimited =
-        (err instanceof Error &&
-          (err.message.includes("rate limited") || err.message.includes("429"))) ||
-        (typeof err === "object" &&
-          err !== null &&
-          "status" in err &&
-          (err as { status: number }).status === 429);
-
-      if (isRateLimited) {
-        if (attempt === maxRetries) {
-          throw err; // Don't wait on the last attempt
-        }
-
-        // Try to get Retry-After from the error (Notion client includes headers)
-        let delay = 1000 * Math.pow(2, attempt); // Default exponential backoff
-
-        if (typeof err === "object" && err !== null && "headers" in err) {
-          const headers = (err as { headers: Headers }).headers;
-          const retryAfter = headers?.get?.("retry-after");
-          if (retryAfter) {
-            delay = parseInt(retryAfter, 10) * 1000; // Convert seconds to ms
-            log.warn(
-              `Rate limited, Retry-After: ${retryAfter}s (attempt ${attempt + 1}/${maxRetries + 1})`
-            );
-          } else {
-            log.warn(
-              `Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`
-            );
-          }
-        } else {
-          log.warn(
-            `Rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries + 1})`
-          );
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-
-      // For other errors, don't retry
-      throw err;
-    }
-  }
-
-  throw lastError;
 }
 
 /**
@@ -165,10 +97,9 @@ export interface ChildItems {
 export async function fetchChildren(client: Client, blockId: string): Promise<ChildItems> {
   log.debug(`Fetching children of: ${blockId}`);
 
-  const blocks = await withRetry(() =>
-    collectPaginatedAPI(client.blocks.children.list, {
-      block_id: blockId,
-    })
+  const blocks = await collectPaginatedAPI(
+    (args) => withRetry(() => client.blocks.children.list(args)),
+    { block_id: blockId }
   );
 
   const pages: NotionPage[] = [];
@@ -196,10 +127,9 @@ export async function fetchBlocks(client: Client, blockId: string): Promise<Noti
 
   let blocks;
   try {
-    blocks = await withRetry(() =>
-      collectPaginatedAPI(client.blocks.children.list, {
-        block_id: blockId,
-      })
+    blocks = await collectPaginatedAPI(
+      (args) => withRetry(() => client.blocks.children.list(args)),
+      { block_id: blockId }
     );
   } catch (err) {
     // Handle unsupported block types (e.g., ai_block)
@@ -239,10 +169,9 @@ async function fetchBlocksRecursive(
 ): Promise<NotionBlock[]> {
   let blocks;
   try {
-    blocks = await withRetry(() =>
-      collectPaginatedAPI(client.blocks.children.list, {
-        block_id: blockId,
-      })
+    blocks = await collectPaginatedAPI(
+      (args) => withRetry(() => client.blocks.children.list(args)),
+      { block_id: blockId }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -316,10 +245,9 @@ export async function fetchDatabasePages(
 ): Promise<NotionPage[]> {
   log.debug(`Fetching database pages: ${databaseId}`);
 
-  const results = await withRetry(() =>
-    collectPaginatedAPI(client.databases.query, {
-      database_id: databaseId,
-    })
+  const results = await collectPaginatedAPI(
+    (args) => withRetry(() => client.databases.query(args)),
+    { database_id: databaseId }
   );
 
   const pages: NotionPage[] = [];

@@ -17,7 +17,6 @@ import {
   fetchBlocks,
   getPageTitle,
   getPageProperties,
-  withRetry,
   type NotionBlock,
 } from "../notion/client.ts";
 import { pageToMarkdown, slugify } from "../markdown/page.ts";
@@ -53,7 +52,7 @@ export async function partialSync(options: PartialSyncOptions): Promise<void> {
       log.info(`Fetching page: ${pageId}`);
 
       // Fetch page metadata
-      const page = await withRetry(() => fetchPage(client, pageId));
+      const page = await fetchPage(client, pageId);
       const title = getPageTitle(page);
       const properties = getPageProperties(page);
       const lastEditedTime =
@@ -62,7 +61,7 @@ export async function partialSync(options: PartialSyncOptions): Promise<void> {
       log.info(`  Found: ${title}`);
 
       // Fetch blocks
-      const blocks = await withRetry(() => fetchBlocks(client, pageId));
+      const blocks = await fetchBlocks(client, pageId);
 
       // Build minimal PageNode
       const node: PageNode = {
