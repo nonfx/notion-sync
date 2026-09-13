@@ -97,26 +97,37 @@ export interface ChildItems {
 export async function fetchChildren(client: Client, blockId: string): Promise<ChildItems> {
   log.debug(`Fetching children of: ${blockId}`);
 
-  const blocks = await collectPaginatedAPI(
-    (args) => withRetry(() => client.blocks.children.list(args)),
-    { block_id: blockId }
-  );
-
   const pages: NotionPage[] = [];
-  const databaseIds: string[] = [];
+  const databaseIds = new Set<string>();
 
-  for (const block of blocks) {
-    if (!isFullBlock(block)) continue;
+  async function scanBlock(id: string): Promise<void> {
+    let blocks;
+    try {
+      blocks = await collectPaginatedAPI(
+        (args) => withRetry(() => client.blocks.children.list(args)),
+        { block_id: id }
+      );
+    } catch (error) {
+      throw new Error(`Could not scan block ${id} for nested databases under ${blockId}`, {
+        cause: error,
+      });
+    }
 
-    if (block.type === "child_page") {
-      const page = await fetchPage(client, block.id);
-      pages.push(page);
-    } else if (block.type === "child_database") {
-      databaseIds.push(block.id);
+    for (const block of blocks) {
+      if (!isFullBlock(block)) continue;
+
+      if (block.type === "child_page") {
+        if (id === blockId) pages.push(await fetchPage(client, block.id));
+      } else if (block.type === "child_database") {
+        databaseIds.add(block.id);
+      } else if (block.has_children) {
+        await scanBlock(block.id);
+      }
     }
   }
 
-  return { pages, databaseIds };
+  await scanBlock(blockId);
+  return { pages, databaseIds: [...databaseIds] };
 }
 
 /**

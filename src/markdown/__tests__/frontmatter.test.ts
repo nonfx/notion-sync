@@ -152,3 +152,39 @@ Body.
     expect(parsed.body.trim()).toBe("Body.");
   });
 });
+
+it("preserves hand-authored plain and single-quoted array values", () => {
+  const parsed = parseMarkdownFile(String.raw`---
+title: 'A literal \n and ''quoted'' text'
+tags: [plain, 'with, comma', 'can''t', "double, quoted", "escaped \\"]
+---
+Body.
+`);
+  expect(parsed.title).toBe(String.raw`A literal \n and 'quoted' text`);
+  expect(parsed.frontmatter["tags"]).toEqual([
+    "plain",
+    "with, comma",
+    "can't",
+    "double, quoted",
+    "escaped \\",
+  ]);
+});
+
+it("imports legacy quoted values with raw backslashes and literal tabs", () => {
+  const raw = String.raw`---
+title: "C:\docs\guide"
+path: "C:\docs\guide"
+tags: ["C:\docs\guide", "old\q\"quote\"\nline"]
+---
+Body.
+`;
+  const parsed = parseMarkdownFile(raw);
+  expect(parsed.title).toBe(String.raw`C:\docs\guide`);
+  expect(parsed.frontmatter["path"]).toBe(String.raw`C:\docs\guide`);
+  expect(parsed.frontmatter["tags"]).toEqual([String.raw`C:\docs\guide`, 'old\\q"quote"\nline']);
+  expect(parsed.body).toBe("Body.\n");
+
+  const withTabs = parseMarkdownFile('---\ntitle: "Old\tTitle"\nlabel: "Old\tLabel"\n---\nBody.');
+  expect(withTabs.title).toBe("Old\tTitle");
+  expect(withTabs.frontmatter["label"]).toBe("Old\tLabel");
+});

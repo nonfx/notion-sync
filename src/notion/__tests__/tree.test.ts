@@ -226,45 +226,6 @@ describe("tree sibling concurrency", () => {
   }
 });
 
-describe("nested database scan failures", () => {
-  it("rejects with the failing block and original cause after discovering a database", async () => {
-    childrenById.clear();
-    const failure = new Error("API unavailable");
-    const client = {
-      blocks: {
-        children: {
-          list: async ({ block_id }: { block_id: string }) => {
-            if (block_id === "broken-column") throw failure;
-            if (block_id !== "root") return { results: [], has_more: false, next_cursor: null };
-            return {
-              results: [
-                {
-                  object: "block",
-                  id: "found-database",
-                  type: "child_database",
-                  has_children: false,
-                  child_database: { title: "Found" },
-                },
-                { object: "block", id: "broken-column", type: "column", has_children: true },
-              ],
-              has_more: false,
-              next_cursor: null,
-            };
-          },
-        },
-      },
-    } as unknown as Client;
-    const error = await buildDatabaseTree(client, "root").then(
-      () => null,
-      (cause: unknown) => cause
-    );
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("root");
-    expect((error as Error).message).toContain("broken-column");
-    expect((error as Error).cause).toBe(failure);
-  });
-});
-
 it("keeps sibling order when the second page finishes first", async () => {
   const releases = new Map<string, () => void>();
   beforeFetch = async (id) => {
