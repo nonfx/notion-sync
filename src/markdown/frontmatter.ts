@@ -128,7 +128,12 @@ function splitArrayValues(inner: string): string[] {
 
 function unquote(value: string): string {
   if (value.startsWith('"') && value.endsWith('"')) {
-    return JSON.parse(value) as string;
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      // Older exports left backslashes and tabs raw inside quoted strings.
+      return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, "\n");
+    }
   }
   if (value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1).replace(/''/g, "'");

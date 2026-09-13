@@ -2,7 +2,7 @@
  * Page tree structure for representing Notion page hierarchy
  */
 
-import { Client, collectPaginatedAPI, isFullBlock } from "@notionhq/client";
+import type { Client } from "@notionhq/client";
 import {
   fetchPage,
   fetchChildren,
@@ -13,7 +13,6 @@ import {
   getPageTitle,
   getDatabaseTitle,
   getPageProperties,
-  withRetry,
   type NotionBlock,
   type PropertyValue,
 } from "./client.ts";
@@ -246,17 +245,13 @@ export async function buildDatabaseTree(
   // Also fetch blocks from the database view itself (may contain child_database blocks)
   const { pages: childPages, databaseIds: childDbIds } = await fetchChildren(client, databaseId);
 
-  // Also look for nested databases inside column layouts etc
-  const nestedDbIds = await findNestedDatabases(client, databaseId);
-  const allDbIds = [...new Set([...childDbIds, ...nestedDbIds])];
-
   // Build child nodes in parallel
   const childTasks = [
     ...pages.map((page) => () => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
     ...childPages.map(
       (page) => () => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)
     ),
-    ...allDbIds.map(
+    ...childDbIds.map(
       (dbId) => () => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)
     ),
   ];
@@ -273,44 +268,6 @@ export async function buildDatabaseTree(
     isDatabase: true,
     excluded,
   };
-}
-
-/**
- * Recursively find child_database blocks nested inside columns, toggles, etc.
- */
-async function findNestedDatabases(client: Client, blockId: string): Promise<string[]> {
-  const databaseIds: string[] = [];
-
-  async function scanBlock(id: string): Promise<void> {
-    let blocks;
-    try {
-      blocks = await collectPaginatedAPI(
-        (args) => withRetry(() => client.blocks.children.list(args)),
-        { block_id: id }
-      );
-    } catch (err) {
-      throw new Error(`Could not scan block ${id} for nested databases under ${blockId}`, {
-        cause: err,
-      });
-    }
-
-    for (const block of blocks) {
-      if (!isFullBlock(block)) continue;
-
-      if (block.type === "child_database") {
-        log.debug(`Found nested database: ${block.child_database.title} (${block.id})`);
-        databaseIds.push(block.id);
-      }
-
-      // Recurse into blocks that can contain other blocks (columns, toggles, etc.)
-      if (block.has_children && block.type !== "child_page" && block.type !== "child_database") {
-        await scanBlock(block.id);
-      }
-    }
-  }
-
-  await scanBlock(blockId);
-  return databaseIds;
 }
 
 /**
