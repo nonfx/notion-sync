@@ -152,3 +152,20 @@ Body.
     expect(parsed.body.trim()).toBe("Body.");
   });
 });
+
+it("preserves hand-authored plain and single-quoted array values", () => {
+  const parsed = parseMarkdownFile(String.raw`---
+title: 'A literal \n and ''quoted'' text'
+tags: [plain, 'with, comma', 'can''t', "double, quoted", "escaped \\"]
+---
+Body.
+`);
+  expect(parsed.title).toBe(String.raw`A literal \n and 'quoted' text`);
+  expect(parsed.frontmatter["tags"]).toEqual([
+    "plain",
+    "with, comma",
+    "can't",
+    "double, quoted",
+    "escaped \\",
+  ]);
+});

@@ -106,7 +106,7 @@ function generateFrontmatter(page: PageNode): string {
   const lines = [
     "---",
     `notion_id: ${page.id}`,
-    `title: "${escapeYamlString(page.title)}"`,
+    `title: ${JSON.stringify(page.title)}`,
     `last_edited: ${page.lastEditedTime}`,
   ];
 
@@ -148,20 +148,13 @@ function formatYamlValue(value: PropertyValue): string | null {
 
   if (Array.isArray(value)) {
     if (value.length === 0) return null;
-    return `[${value.map((v) => `"${escapeYamlString(String(v))}"`).join(", ")}]`;
+    return `[${value.map((item) => JSON.stringify(item)).join(", ")}]`;
   }
 
   // String
   const str = String(value);
   if (!str) return null;
-  return `"${escapeYamlString(str)}"`;
-}
-
-/**
- * Escape special characters in YAML strings
- */
-function escapeYamlString(str: string): string {
-  return str.replace(/"/g, '\\"').replace(/\n/g, "\\n");
+  return JSON.stringify(str);
 }
 
 /**

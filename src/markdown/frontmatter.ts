@@ -97,17 +97,41 @@ function parseValue(value: string): string | string[] {
   if (value.startsWith("[") && value.endsWith("]")) {
     const inner = value.slice(1, -1).trim();
     if (!inner) return [];
-    return inner.split(",").map((item) => unquote(item.trim()));
+    return splitArrayValues(inner).map((item) => unquote(item.trim()));
   }
   return unquote(value);
 }
 
+function splitArrayValues(inner: string): string[] {
+  const items: string[] = [];
+  let start = 0;
+  let quote: string | null = null;
+  for (let index = 0; index < inner.length; index++) {
+    const char = inner[index];
+    if (quote !== null) {
+      if (quote === '"' && char === "\\") {
+        index++;
+      } else if (char === quote) {
+        if (quote === "'" && inner[index + 1] === "'") index++;
+        else quote = null;
+      }
+    } else if ((char === '"' || char === "'") && inner.slice(start, index).trim() === "") {
+      quote = char;
+    } else if (char === ",") {
+      items.push(inner.slice(start, index));
+      start = index + 1;
+    }
+  }
+  items.push(inner.slice(start));
+  return items;
+}
+
 function unquote(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, "\n");
+  if (value.startsWith('"') && value.endsWith('"')) {
+    return JSON.parse(value) as string;
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
   }
   return value;
 }
