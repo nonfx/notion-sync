@@ -128,25 +128,25 @@ export function resetTreeConcurrency(): void {
 }
 
 /**
- * Run promises with limited concurrency
+ * Limit each sibling group. Recursive groups have independent worker pools.
  */
-async function runWithConcurrency<T>(tasks: Promise<T>[], concurrency: number): Promise<T[]> {
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number
+): Promise<T[]> {
   const results: T[] = [];
-  const executing: Promise<void>[] = [];
+  let nextIndex = 0;
 
-  for (const task of tasks) {
-    const p = task.then((result) => {
-      results.push(result);
-      executing.splice(executing.indexOf(p), 1);
-    });
-    executing.push(p);
-
-    if (executing.length >= concurrency) {
-      await Promise.race(executing);
+  async function worker(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      results[index] = await tasks[index]!();
     }
   }
 
-  await Promise.all(executing);
+  await Promise.all(
+    Array.from({ length: Math.min(Math.ceil(concurrency), tasks.length) }, () => worker())
+  );
   return results;
 }
 
@@ -251,12 +251,16 @@ export async function buildDatabaseTree(
   const allDbIds = [...new Set([...childDbIds, ...nestedDbIds])];
 
   // Build child nodes in parallel
-  const childPromises = [
-    ...pages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
-    ...childPages.map((page) => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
-    ...allDbIds.map((dbId) => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)),
+  const childTasks = [
+    ...pages.map((page) => () => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)),
+    ...childPages.map(
+      (page) => () => buildPageTree(client, page.id, depth + 1, maxDepth, childOptions)
+    ),
+    ...allDbIds.map(
+      (dbId) => () => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)
+    ),
   ];
-  const children = (await runWithConcurrency(childPromises, treeConcurrency)).filter(
+  const children = (await runWithConcurrency(childTasks, treeConcurrency)).filter(
     (child): child is PageNode => child !== null
   );
 
@@ -278,28 +282,31 @@ async function findNestedDatabases(client: Client, blockId: string): Promise<str
   const databaseIds: string[] = [];
 
   async function scanBlock(id: string): Promise<void> {
+    let blocks;
     try {
-      const blocks = await withRetry(() =>
+      blocks = await withRetry(() =>
         collectPaginatedAPI(client.blocks.children.list, {
           block_id: id,
         })
       );
-
-      for (const block of blocks) {
-        if (!isFullBlock(block)) continue;
-
-        if (block.type === "child_database") {
-          log.debug(`Found nested database: ${block.child_database.title} (${block.id})`);
-          databaseIds.push(block.id);
-        }
-
-        // Recurse into blocks that can contain other blocks (columns, toggles, etc.)
-        if (block.has_children && block.type !== "child_page" && block.type !== "child_database") {
-          await scanBlock(block.id);
-        }
-      }
     } catch (err) {
-      log.debug(`Could not scan blocks for ${id}: ${err}`);
+      throw new Error(`Could not scan block ${id} for nested databases under ${blockId}`, {
+        cause: err,
+      });
+    }
+
+    for (const block of blocks) {
+      if (!isFullBlock(block)) continue;
+
+      if (block.type === "child_database") {
+        log.debug(`Found nested database: ${block.child_database.title} (${block.id})`);
+        databaseIds.push(block.id);
+      }
+
+      // Recurse into blocks that can contain other blocks (columns, toggles, etc.)
+      if (block.has_children && block.type !== "child_page" && block.type !== "child_database") {
+        await scanBlock(block.id);
+      }
     }
   }
 
@@ -358,14 +365,14 @@ export async function buildPageTree(
   const { pages: childPages, databaseIds } = await fetchChildren(client, rootPageId);
 
   // Build child nodes in parallel (with concurrency limit)
-  const childPromises = [
-    ...childPages.map((p) => buildPageTree(client, p.id, depth + 1, maxDepth, childOptions)),
-    ...databaseIds.map((dbId) =>
-      buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)
+  const childTasks = [
+    ...childPages.map((p) => () => buildPageTree(client, p.id, depth + 1, maxDepth, childOptions)),
+    ...databaseIds.map(
+      (dbId) => () => buildDatabaseTree(client, dbId, maxDepth, depth + 1, childOptions)
     ),
   ];
 
-  const children = (await runWithConcurrency(childPromises, treeConcurrency)).filter(
+  const children = (await runWithConcurrency(childTasks, treeConcurrency)).filter(
     (child): child is PageNode => child !== null
   );
 
@@ -401,8 +408,8 @@ export async function fetchAllBlocks(client: Client, tree: PageNode): Promise<Pa
   const withBlocks = tree.isDatabase || tree.excluded ? tree : await fetchPageBlocks(client, tree);
 
   // Fetch children's blocks in parallel
-  const childPromises = withBlocks.children.map((child) => fetchAllBlocks(client, child));
-  const childrenWithBlocks = await runWithConcurrency(childPromises, treeConcurrency);
+  const childTasks = withBlocks.children.map((child) => () => fetchAllBlocks(client, child));
+  const childrenWithBlocks = await runWithConcurrency(childTasks, treeConcurrency);
 
   return {
     ...withBlocks,
@@ -426,10 +433,10 @@ export async function fetchBlocksFiltered(
 
   const withBlocks = shouldFetch ? await fetchPageBlocks(client, tree) : tree;
 
-  const childPromises = withBlocks.children.map((child) =>
-    fetchBlocksFiltered(client, child, pageIds)
+  const childTasks = withBlocks.children.map(
+    (child) => () => fetchBlocksFiltered(client, child, pageIds)
   );
-  const childrenWithBlocks = await runWithConcurrency(childPromises, treeConcurrency);
+  const childrenWithBlocks = await runWithConcurrency(childTasks, treeConcurrency);
 
   return {
     ...withBlocks,

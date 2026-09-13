@@ -1,8 +1,8 @@
 /**
- * Integration tests for date-filter wiring in tree building.
+ * Regression tests for tree selection, sibling scheduling, and scan failures.
  */
 
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import type { Client } from "@notionhq/client";
 import type { EffectiveSelectors } from "../../config/load.ts";
 
@@ -37,7 +37,10 @@ function makePage(id: string, title: string, lastEditedTime: string): MockPage {
 const pagesById = new Map<string, MockPage>();
 const childrenById = new Map<string, { pages: MockPage[]; databaseIds: string[] }>();
 
+let beforeFetch: (id: string) => Promise<void> = async () => {};
+
 const fetchPageMock = mock(async (_client: Client, pageId: string): Promise<MockPage> => {
+  await beforeFetch(pageId);
   const page = pagesById.get(pageId);
   if (!page) {
     throw new Error(`Unknown page: ${pageId}`);
@@ -57,10 +60,17 @@ const fetchChildrenMock = mock(
 mock.module("../client.ts", () => ({
   fetchPage: fetchPageMock,
   fetchChildren: fetchChildrenMock,
-  fetchDatabase: mock(async () => {
-    throw new Error("fetchDatabase not used in these tests");
+  fetchDatabase: mock(async (_client: Client, id: string) => ({
+    id,
+    last_edited_time: "2026-01-01T00:00:00.000Z",
+  })),
+  fetchDatabasePages: mock(
+    async (_client: Client, id: string) => childrenById.get(id)?.pages ?? []
+  ),
+  fetchBlocks: mock(async (_client: Client, id: string) => {
+    await beforeFetch(id);
+    return [];
   }),
-  fetchDatabasePages: mock(async () => []),
   isLinkedDatabaseError: () => false,
   getPageTitle: (page: MockPage) => page.properties.title.title[0]?.plain_text ?? "Untitled",
   getDatabaseTitle: () => "Database",
@@ -68,7 +78,14 @@ mock.module("../client.ts", () => ({
   withRetry: <T>(fn: () => Promise<T>) => fn(),
 }));
 
-const { buildPageTree, resetTreeConcurrency } = await import("../tree.ts");
+const {
+  buildPageTree,
+  buildDatabaseTree,
+  fetchAllBlocks,
+  fetchBlocksFiltered,
+  setTreeConcurrency,
+  resetTreeConcurrency,
+} = await import("../tree.ts");
 
 const fakeClient = {} as Client;
 
@@ -121,4 +138,165 @@ describe("buildPageTree date filter integration", () => {
     expect(tree.children).toHaveLength(0);
     expect(fetchChildrenMock).toHaveBeenCalledWith(fakeClient, PARENT_ID);
   });
+});
+
+afterEach(() => {
+  beforeFetch = async () => {};
+  resetTreeConcurrency();
+});
+
+function node(
+  id: string,
+  children: import("../tree.ts").PageNode[] = []
+): import("../tree.ts").PageNode {
+  return { id, title: id, lastEditedTime: "2026-01-01T00:00:00.000Z", blocks: null, children };
+}
+
+const scanClient = {
+  blocks: { children: { list: async () => ({ results: [], has_more: false, next_cursor: null }) } },
+} as unknown as Client;
+
+describe("tree sibling concurrency", () => {
+  for (const operation of [
+    "buildPageTree",
+    "buildDatabaseTree",
+    "fetchAllBlocks",
+    "fetchBlocksFiltered",
+  ] as const) {
+    it(`${operation} bounds active siblings and preserves input order`, async () => {
+      pagesById.clear();
+      childrenById.clear();
+      setTreeConcurrency(2);
+      const ids = ["first", "second", "third", "fourth"];
+      const children = ids.map((id) => makePage(id, id, "2026-01-01T00:00:00.000Z"));
+      for (const page of children) pagesById.set(page.id, page);
+      pagesById.set("root", makePage("root", "Root", "2026-01-01T00:00:00.000Z"));
+      childrenById.set("root", { pages: children, databaseIds: [] });
+      const releases = new Map<string, () => void>();
+      const started: string[] = [];
+      let active = 0;
+      let peak = 0;
+      beforeFetch = async (id) => {
+        if (id === "root") return;
+        started.push(id);
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise<void>((resolve) => releases.set(id, resolve));
+        active--;
+      };
+      const tree = node(
+        "root",
+        ids.map((id) => node(id))
+      );
+      // Database entries and direct child pages are separate sources.
+      if (operation === "buildDatabaseTree") {
+        fetchChildrenMock.mockImplementation(async () => ({ pages: [], databaseIds: [] }));
+      }
+      const pending =
+        operation === "buildPageTree"
+          ? buildPageTree(scanClient, "root")
+          : operation === "buildDatabaseTree"
+            ? buildDatabaseTree(scanClient, "root")
+            : operation === "fetchAllBlocks"
+              ? fetchAllBlocks(scanClient, tree)
+              : fetchBlocksFiltered(scanClient, tree, new Set(ids));
+      try {
+        await Bun.sleep(0);
+        expect(started).toEqual(["first", "second"]);
+        releases.get("second")!();
+        await Bun.sleep(0);
+        expect(started).toEqual(["first", "second", "third"]);
+        releases.get("third")!();
+        await Bun.sleep(0);
+        releases.get("fourth")!();
+        await Bun.sleep(0);
+        releases.get("first")!();
+        const result = await pending;
+        expect(peak).toBe(2);
+        expect(result?.children.map((child) => child.id)).toEqual(ids);
+      } finally {
+        beforeFetch = async () => {};
+        for (const release of releases.values()) release();
+        await pending;
+        fetchChildrenMock.mockImplementation(
+          async (_client, id) => childrenById.get(id) ?? { pages: [], databaseIds: [] }
+        );
+      }
+    });
+  }
+});
+
+describe("nested database scan failures", () => {
+  it("rejects with the failing block and original cause after discovering a database", async () => {
+    childrenById.clear();
+    const failure = new Error("API unavailable");
+    const client = {
+      blocks: {
+        children: {
+          list: async ({ block_id }: { block_id: string }) => {
+            if (block_id === "broken-column") throw failure;
+            if (block_id !== "root") return { results: [], has_more: false, next_cursor: null };
+            return {
+              results: [
+                {
+                  object: "block",
+                  id: "found-database",
+                  type: "child_database",
+                  has_children: false,
+                  child_database: { title: "Found" },
+                },
+                { object: "block", id: "broken-column", type: "column", has_children: true },
+              ],
+              has_more: false,
+              next_cursor: null,
+            };
+          },
+        },
+      },
+    } as unknown as Client;
+    const error = await buildDatabaseTree(client, "root").then(
+      () => null,
+      (cause: unknown) => cause
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("root");
+    expect((error as Error).message).toContain("broken-column");
+    expect((error as Error).cause).toBe(failure);
+  });
+});
+
+it("keeps sibling order when the second page finishes first", async () => {
+  const releases = new Map<string, () => void>();
+  beforeFetch = async (id) => {
+    await new Promise<void>((resolve) => releases.set(id, resolve));
+  };
+  const tree = { ...node("root", [node("first"), node("second")]), isDatabase: true };
+  const pending = fetchAllBlocks(fakeClient, tree);
+  try {
+    await Bun.sleep(0);
+    releases.get("second")!();
+    await Bun.sleep(0);
+    releases.get("first")!();
+    expect((await pending).children.map((child) => child.id)).toEqual(["first", "second"]);
+  } finally {
+    for (const release of releases.values()) release();
+    await pending;
+  }
+});
+
+it("propagates a sibling fetch failure", async () => {
+  const failure = new Error("Page content unavailable");
+  beforeFetch = async (id) => {
+    if (id === "broken") throw failure;
+  };
+  const tree = { ...node("root", [node("healthy"), node("broken")]), isDatabase: true };
+  await expect(fetchAllBlocks(fakeClient, tree)).rejects.toBe(failure);
+});
+
+it("fetches children when positive fractional concurrency rounds to one worker", async () => {
+  setTreeConcurrency(0.5);
+  const tree = { ...node("root", [node("first"), node("second")]), isDatabase: true };
+  const result = await fetchAllBlocks(fakeClient, tree);
+  expect(result.children.map((child) => child.id)).toEqual(["first", "second"]);
+  expect(result.children.every((child) => Array.isArray(child.blocks))).toBe(true);
 });
