@@ -8,13 +8,10 @@
  */
 
 import { dirname, join, normalize } from "node:path";
+import { toPosix } from "../utils/paths.ts";
 
 /** Map of relative file path (POSIX-style) → Notion page id */
 export type PathIdMap = Map<string, string>;
-
-function toPosix(path: string): string {
-  return path.split(/[\\/]/).join("/");
-}
 
 /**
  * Rewrite relative `.md` links in `body` to `notion://<id>` using `pathIdMap`.

@@ -82,9 +82,9 @@ function isRateLimited(error: unknown): boolean {
   );
 }
 
-// Socket-level failures carry an errno code from Node, Bun or node-fetch. A
-// sync makes hundreds of requests, so one dropped connection is expected and
-// must not abort the run.
+// Connection failures carry a code from Node, Bun or node-fetch. A sync makes
+// hundreds of requests, so one dropped connection is expected and must not
+// abort the run.
 const TRANSIENT_NETWORK_CODES = new Set([
   "ECONNRESET",
   "ECONNREFUSED",
@@ -92,6 +92,7 @@ const TRANSIENT_NETWORK_CODES = new Set([
   "EPIPE",
   "EAI_AGAIN",
   "UND_ERR_SOCKET",
+  "ERR_STREAM_PREMATURE_CLOSE",
 ]);
 
 const TRANSIENT_API_CODES = new Set<string>([
@@ -108,6 +109,8 @@ function isTransient(error: unknown): boolean {
       ("status" in error && typeof error.status === "number" && error.status >= 500)
     );
   }
+  // The only abort is abortingFetch's request deadline.
+  if (error instanceof Error && error.name === "AbortError") return true;
   return (
     typeof error === "object" &&
     error !== null &&

@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   `retry.attempts`. Writes that create content (`pages.create`,
   `blocks.children.append`, `blocks.delete`) still retry only rate limits: the
   server may have committed them before the response was lost.
+- **A timed-out request stays open** - The Notion SDK's timeout stopped waiting
+  but left the connection open, so a retry ran beside it, and a body cut short
+  after its headers never settled. Every request now has a 60 s deadline that
+  cancels it, and a body closed early (`ERR_STREAM_PREMATURE_CLOSE`) retries.
+- **Backslashes in index paths and links on Windows** - Index paths and
+  rewritten Markdown links now always use `/`.
 - **Incremental sync refetches every page with a relative output dir** - An
   output dir spelled `./dir` or `dir/` left the dir prefix on every index path.
   The next run then looked for `dir/dir/...`, found no files and refetched every

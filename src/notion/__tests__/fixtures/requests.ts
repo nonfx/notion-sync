@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Client, LogLevel } from "@notionhq/client";
-import { fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
+import { abortingFetch, fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
 import { setRequestLimits, setRetryAttempts, withRetry } from "../../requests.ts";
 import { fetchAllBlocks, fetchBlocksFiltered, type PageNode } from "../../tree.ts";
 import { createNotionWriter } from "../../writer.ts";
@@ -47,6 +47,14 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }
 
+/** Resolve to the value or the rejection, so a test can assert on either. */
+function settle<T>(promise: Promise<T>): Promise<T | unknown> {
+  return promise.then(
+    (value) => value,
+    (error: unknown) => error
+  );
+}
+
 function assertSpacing(starts: number[], interval: number): void {
   for (let i = 1; i < starts.length; i++) {
     assert.ok(
@@ -56,7 +64,7 @@ function assertSpacing(starts: number[], interval: number): void {
   }
 }
 
-const scenario = process.argv[2];
+const scenario = process.argv[2] ?? "";
 if (scenario === "global") {
   setRequestLimits({ concurrency: 2, minIntervalMs: 8 });
   let active = 0;
@@ -266,11 +274,26 @@ if (scenario === "global") {
     }
     if (path.endsWith("/flaky")) {
       flakyAttempts++;
-      if (scenario === "transient-exhaustion" || flakyAttempts === 1) {
+      if (scenario === "transient-premature" && flakyAttempts === 1) {
+        // Headers arrive, then the chunked body is cut short.
+        response.writeHead(200, { "content-type": "application/json" });
+        response.write('{"object":"pa');
+        setTimeout(() => response.destroy(), 20);
+        return;
+      }
+      if (scenario === "transient-timeout" && flakyAttempts === 1) {
+        // Never answer. The request deadline must close this connection.
+        request.socket.on("close", () => seen.push({ path: "closed", at: performance.now() }));
+        return;
+      }
+      if (
+        scenario === "transient-exhaustion" ||
+        (scenario === "transient" && flakyAttempts === 1)
+      ) {
         request.socket.destroy();
         return;
       }
-      if (flakyAttempts === 2) {
+      if (scenario === "transient" && flakyAttempts === 2) {
         response.writeHead(502, { "content-type": "text/html" }).end("<html>Bad gateway</html>");
         return;
       }
@@ -281,12 +304,9 @@ if (scenario === "global") {
     auth: "test",
     logLevel: LogLevel.ERROR,
     baseUrl: `http://127.0.0.1:${server.port}`,
+    fetch: abortingFetch(200),
+    timeoutMs: 5_000,
   });
-  const settle = <T>(promise: Promise<T>) =>
-    promise.then(
-      (v) => v,
-      (e: unknown) => e
-    );
   try {
     if (scenario === "transient") {
       const flaky = settle(fetchPage(client, "flaky"));
@@ -303,6 +323,19 @@ if (scenario === "global") {
       assert.ok(seen[1]!.at - seen[0]!.at < 900, "the backoff held the request slot");
       assert.ok(seen[2]!.at - seen[0]!.at >= 990, "first retry skipped the backoff");
       assert.ok(seen[3]!.at - seen[2]!.at >= 1990, "second retry skipped the backoff");
+    } else if (scenario === "transient-premature") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.equal(flakyAttempts, 2);
+    } else if (scenario === "transient-timeout") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.deepEqual(
+        seen.map((entry) => entry.path),
+        ["/v1/pages/flaky", "closed", "/v1/pages/flaky"],
+        "the timed-out request stayed open beside its retry"
+      );
+      assert.ok(seen[1]!.at - seen[0]!.at < 1_000, "the SDK timeout, not the deadline, ended it");
     } else if (scenario === "transient-exhaustion") {
       const result = await settle(fetchPage(client, "flaky"));
       assert.equal(seen.length, 3);

@@ -14,6 +14,8 @@ for (const scenario of [
   "partial",
   "transient",
   "transient-exhaustion",
+  "transient-premature",
+  "transient-timeout",
   "transient-write",
   "nonretryable",
 ]) {

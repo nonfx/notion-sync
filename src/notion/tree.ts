@@ -187,7 +187,7 @@ export async function buildTree(
       log.info("Root is a database, fetching entries...");
       const databaseTree = await buildDatabaseTree(client, rootId, maxDepth, 0, initializedOptions);
       if (!databaseTree) {
-        throw new Error(`Cannot sync linked database root: ${rootId}`);
+        throw new Error(`Cannot sync linked database root: ${rootId}`, { cause: err });
       }
       return databaseTree;
     }

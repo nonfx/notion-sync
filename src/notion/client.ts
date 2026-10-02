@@ -14,6 +14,8 @@ import type {
   BlockObjectResponse,
   DatabaseObjectResponse,
 } from "@notionhq/client/build/src/api-endpoints";
+import type { SupportedFetch } from "@notionhq/client/build/src/fetch-types";
+import nodeFetch from "node-fetch/lib/index.js";
 import { log } from "../utils/logger.ts";
 
 export type NotionPage = PageObjectResponse;
@@ -62,12 +64,31 @@ export interface NotionClientOptions {
   token: string;
 }
 
+/** How long one request may take, including reading its body. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * node-fetch with a deadline that cancels the request. The SDK's own timeout
+ * only stops waiting: the connection stays open, a retry would run beside it,
+ * and a body cut short after its headers would never settle. The SDK timeout
+ * is set later, so this abort always decides.
+ *
+ * node-fetch is imported by path because Bun replaces a bare "node-fetch"
+ * import with its own fetch, which reports failures differently. Source runs
+ * and release builds then raise the same errors.
+ */
+export function abortingFetch(timeoutMs: number): SupportedFetch {
+  return (url, init) => nodeFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 /**
  * Creates a configured Notion client
  */
 export function createNotionClient(options: NotionClientOptions): Client {
   return new Client({
     auth: options.token,
+    fetch: abortingFetch(REQUEST_TIMEOUT_MS),
+    timeoutMs: REQUEST_TIMEOUT_MS + 5_000,
   });
 }
 

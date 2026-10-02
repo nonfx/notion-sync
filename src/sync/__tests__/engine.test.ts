@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { mkdtemp, rm, access, readFile, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, access, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Client } from "@notionhq/client";
@@ -278,7 +278,6 @@ describe("sync stale-file cleanup", () => {
   });
 
   afterEach(async () => {
-    await chmod(join(outputDir, "root"), 0o755).catch(() => undefined);
     await rm(outputDir, { recursive: true, force: true });
   });
 
@@ -299,11 +298,13 @@ describe("sync stale-file cleanup", () => {
     const leafFile = join(outputDir, "root", "leaf.md");
     childrenById.set(SYNC_ROOT_ID, { pages: [], databaseIds: [] });
 
-    await chmod(join(outputDir, "root"), 0o555);
+    // unlink refuses a directory for every user, root included.
+    await rm(leafFile);
+    await mkdir(join(leafFile, "blocker"), { recursive: true });
     await expect(sync(options())).rejects.toThrow();
-    await expectFileExists(leafFile);
 
-    await chmod(join(outputDir, "root"), 0o755);
+    await rm(leafFile, { recursive: true });
+    await writeFile(leafFile, "stale");
     await sync(options());
     await expect(readFile(leafFile)).rejects.toThrow();
   });
