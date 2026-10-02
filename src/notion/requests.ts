@@ -1,3 +1,4 @@
+import { APIErrorCode, ClientErrorCode, isNotionClientError } from "@notionhq/client";
 import { log } from "../utils/logger.ts";
 
 export const DEFAULT_REQUEST_CONCURRENCY = 2;
@@ -81,6 +82,48 @@ function isRateLimited(error: unknown): boolean {
   );
 }
 
+// Connection failures carry a code from Node, Bun or node-fetch. A sync makes
+// hundreds of requests, so one dropped connection is expected and must not
+// abort the run.
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "EAI_AGAIN",
+  "UND_ERR_SOCKET",
+  "ERR_STREAM_PREMATURE_CLOSE",
+]);
+
+const TRANSIENT_API_CODES = new Set<string>([
+  APIErrorCode.InternalServerError,
+  APIErrorCode.ServiceUnavailable,
+  ClientErrorCode.RequestTimeout,
+]);
+
+/** Failures that say nothing about the request itself, so a retry can succeed. */
+function isTransient(error: unknown): boolean {
+  if (isNotionClientError(error)) {
+    return (
+      TRANSIENT_API_CODES.has(error.code) ||
+      ("status" in error && typeof error.status === "number" && error.status >= 500)
+    );
+  }
+  // The only abort is abortingFetch's request deadline.
+  if (error instanceof Error && error.name === "AbortError") return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    TRANSIENT_NETWORK_CODES.has(error.code)
+  );
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function retryDelay(error: unknown, attempt: number): number {
   if (typeof error === "object" && error !== null && "headers" in error) {
     const headers = error.headers as { get?: (name: string) => string | null } | undefined;
@@ -93,8 +136,18 @@ function retryDelay(error: unknown, attempt: number): number {
   return 1000 * Math.pow(2, attempt);
 }
 
-/** Every attempt joins the shared queue. Backoff holds no request slot. */
-export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttempts): Promise<T> {
+/**
+ * Retries rate limits, which Notion rejects before doing any work. An
+ * idempotent request also retries transient failures. A write is not retried
+ * after one: the server may have committed it before the response was lost,
+ * and a repeat would duplicate the page or blocks. Every attempt joins the
+ * shared queue. Backoff holds no request slot.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  { idempotent = false }: { idempotent?: boolean } = {}
+): Promise<T> {
+  const maxRetries = retryAttempts;
   for (let attempt = 0; ; attempt++) {
     try {
       return await schedule(async () => {
@@ -115,7 +168,15 @@ export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttem
         }
       });
     } catch (error) {
-      if (!isRateLimited(error) || attempt >= maxRetries) throw error;
+      if (attempt >= maxRetries) throw error;
+      if (isRateLimited(error)) continue;
+      if (!idempotent || !isTransient(error)) throw error;
+      // Back off outside the queue: one flaky request must not stall the rest.
+      const delay = retryDelay(error, attempt);
+      log.warn(
+        `${describeError(error)}; retrying after ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 }

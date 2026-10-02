@@ -61,16 +61,20 @@ export function createNotionWriter(client: Client): NotionWriter {
     },
 
     async setTitle(pageId: string, title: string): Promise<void> {
-      await withRetry(() =>
-        client.pages.update({
-          page_id: pageId,
-          properties: titleProperty(title),
-        })
+      await withRetry(
+        () =>
+          client.pages.update({
+            page_id: pageId,
+            properties: titleProperty(title),
+          }),
+        { idempotent: true }
       );
     },
 
     async clearBlocks(pageId: string): Promise<void> {
-      const existing = await withRetry(() => client.blocks.children.list({ block_id: pageId }));
+      const existing = await withRetry(() => client.blocks.children.list({ block_id: pageId }), {
+        idempotent: true,
+      });
       for (const block of existing.results) {
         // Never delete subpages/subdatabases — that would archive the child
         // pages we're trying to sync. Only clear content blocks.

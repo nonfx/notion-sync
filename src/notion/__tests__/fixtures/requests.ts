@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Client, LogLevel } from "@notionhq/client";
-import { fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
+import { abortingFetch, fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
 import { setRequestLimits, setRetryAttempts, withRetry } from "../../requests.ts";
 import { fetchAllBlocks, fetchBlocksFiltered, type PageNode } from "../../tree.ts";
 import { createNotionWriter } from "../../writer.ts";
@@ -33,6 +34,33 @@ function node(id: string, children?: PageNode[]): PageNode {
   };
 }
 
+async function listen(
+  handler: (request: IncomingMessage, response: ServerResponse) => void
+): Promise<{ port: number; close: () => void }> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    port,
+    close: () => {
+      server.closeAllConnections();
+      server.close();
+    },
+  };
+}
+
+function json(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+}
+
+/** Resolve to the value or the rejection, so a test can assert on either. */
+function settle<T>(promise: Promise<T>): Promise<T | unknown> {
+  return promise.then(
+    (value) => value,
+    (error: unknown) => error
+  );
+}
+
 function assertSpacing(starts: number[], interval: number): void {
   for (let i = 1; i < starts.length; i++) {
     assert.ok(
@@ -42,7 +70,13 @@ function assertSpacing(starts: number[], interval: number): void {
   }
 }
 
-const scenario = process.argv[2];
+const scenario = process.argv[2] ?? "";
+
+// A request with no deadline can hang forever. Fail instead of hanging the suite.
+setTimeout(() => {
+  console.error(`${scenario}: still running after 15 s`);
+  process.exit(1);
+}, 15_000).unref();
 if (scenario === "global") {
   setRequestLimits({ concurrency: 2, minIntervalMs: 8 });
   let active = 0;
@@ -232,6 +266,121 @@ if (scenario === "global") {
     )
   );
   assertSpacing(starts, 334);
+} else if (scenario.startsWith("transient") || scenario === "nonretryable") {
+  // A real server and the client's own fetch, so a dropped connection raises
+  // the FetchError the Notion client raises in production (ECONNRESET).
+  setRequestLimits({ concurrency: 1, minIntervalMs: 0 });
+  setRetryAttempts(2);
+  const seen: Array<{ path: string; at: number }> = [];
+  let flakyAttempts = 0;
+  const server = await listen((request, response) => {
+    const path = new URL(request.url!, "http://local").pathname;
+    seen.push({ path, at: performance.now() });
+    if (scenario === "nonretryable") {
+      return json(response, 403, { object: "error", code: "restricted_resource", message: "no" });
+    }
+    if (path === "/v1/pages" && request.method === "POST") {
+      // The server commits the page, then the response is lost.
+      request.socket.destroy();
+      return;
+    }
+    if (path.endsWith("/flaky")) {
+      flakyAttempts++;
+      if (scenario === "transient-premature" && flakyAttempts === 1) {
+        // Headers arrive, then the chunked body is cut short.
+        response.writeHead(200, { "content-type": "application/json" });
+        response.write('{"object":"pa');
+        setTimeout(() => response.destroy(), 20);
+        return;
+      }
+      if (scenario === "transient-stalled-body" && flakyAttempts === 1) {
+        // Headers arrive, then the body stops. Only the deadline can end it.
+        response.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+        response.write('{"object":"pa');
+        return;
+      }
+      if (scenario === "transient-timeout" && flakyAttempts === 1) {
+        // Never answer. The request deadline must close this connection.
+        request.socket.on("close", () => seen.push({ path: "closed", at: performance.now() }));
+        return;
+      }
+      if (
+        scenario === "transient-exhaustion" ||
+        (scenario === "transient" && flakyAttempts === 1)
+      ) {
+        request.socket.destroy();
+        return;
+      }
+      if (scenario === "transient" && flakyAttempts === 2) {
+        response.writeHead(502, { "content-type": "text/html" }).end("<html>Bad gateway</html>");
+        return;
+      }
+    }
+    json(response, 200, page(path.endsWith("/flaky") ? "healthy" : "other"));
+  });
+  const client = new Client({
+    auth: "test",
+    logLevel: LogLevel.ERROR,
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    fetch: abortingFetch(200),
+    timeoutMs: 5_000,
+  });
+  try {
+    if (scenario === "transient") {
+      const flaky = settle(fetchPage(client, "flaky"));
+      // Submitted after the first attempt fails; it must not wait out the backoff.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const other = await fetchPage(client, "other");
+      assert.equal(other.id, "other");
+      const result = await flaky;
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.deepEqual(
+        seen.map((entry) => entry.path),
+        ["/v1/pages/flaky", "/v1/pages/other", "/v1/pages/flaky", "/v1/pages/flaky"]
+      );
+      assert.ok(seen[1]!.at - seen[0]!.at < 900, "the backoff held the request slot");
+      assert.ok(seen[2]!.at - seen[0]!.at >= 990, "first retry skipped the backoff");
+      assert.ok(seen[3]!.at - seen[2]!.at >= 1990, "second retry skipped the backoff");
+    } else if (scenario === "transient-premature") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.equal(flakyAttempts, 2);
+    } else if (scenario === "transient-stalled-body") {
+      const started = performance.now();
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.equal(flakyAttempts, 2);
+      // 200 ms deadline plus 1 s backoff. The SDK timeout covers only the
+      // headers, so without the deadline this read never ends.
+      assert.ok(performance.now() - started < 3_000, "the stalled body outlived the deadline");
+    } else if (scenario === "transient-timeout") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.deepEqual(
+        seen.map((entry) => entry.path),
+        ["/v1/pages/flaky", "closed", "/v1/pages/flaky"],
+        "the timed-out request stayed open beside its retry"
+      );
+      assert.ok(seen[1]!.at - seen[0]!.at < 1_000, "the SDK timeout, not the deadline, ended it");
+    } else if (scenario === "transient-exhaustion") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal(seen.length, 3);
+      assert.ok(result instanceof Error, String(result));
+      assert.equal((result as { code?: string }).code, "ECONNRESET");
+    } else if (scenario === "transient-write") {
+      const result = await settle(
+        createNotionWriter(client).createPage({ id: "parent", type: "page" }, "New page")
+      );
+      assert.ok(result instanceof Error, String(result));
+      assert.equal(seen.length, 1, "a lost create response was retried");
+    } else {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.ok(result instanceof Error, String(result));
+      assert.equal(seen.length, 1, "a 403 was retried");
+    }
+  } finally {
+    server.close();
+  }
 } else {
   throw new Error(`Unknown scenario: ${scenario}`);
 }

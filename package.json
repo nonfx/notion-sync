@@ -1,6 +1,6 @@
 {
   "name": "notion-rsync",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Rsync for Notion - Sync Notion pages to local markdown files",
   "type": "module",
   "main": "dist/cli.js",
@@ -25,7 +25,7 @@
     "format": "oxfmt src/",
     "format:check": "oxfmt --check src/",
     "check": "bun run lint && bun run format:check",
-    "test": "bun test",
+    "test": "bun test --isolate",
     "prepublishOnly": "bun run build"
   },
   "engines": {
@@ -47,6 +47,8 @@
   "devDependencies": {
     "@notionhq/client": "^2.2.15",
     "@types/bun": "latest",
+    "@types/node-fetch": "^2.6.0",
+    "node-fetch": "^2.7.0",
     "oxfmt": "^0.27.0",
     "oxlint": "^1.42.0"
   },

@@ -3,7 +3,8 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
+import { toPosix } from "../utils/paths.ts";
 import type { PageNode } from "../notion/tree.ts";
 import { pageToMarkdown, slugify, uniqueFilename } from "./page.ts";
 import { resolveNotionLinks, type LinkMap } from "./links.ts";
@@ -120,7 +121,7 @@ function buildLinkMap(
   usedFilenames.add(filePath);
 
   // Store relative path from baseDir
-  const relativePath = filePath.replace(baseDir + "/", "");
+  const relativePath = toPosix(relative(baseDir, filePath));
   linkMap.set(page.id, relativePath);
   // Also store without dashes (Notion IDs sometimes come both ways)
   linkMap.set(page.id.replace(/-/g, ""), relativePath);
@@ -201,7 +202,7 @@ async function writePageRecursive(
 
   usedFilenames.add(filePath);
 
-  const relativePath = filePath.replace(baseDir + "/", "");
+  const relativePath = toPosix(relative(baseDir, filePath));
 
   // Unchanged page in an incremental sync: reserve the filename (done above)
   // and record the result, but don't regenerate or rewrite the file.

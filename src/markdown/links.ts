@@ -3,6 +3,7 @@
  */
 
 import { relative, dirname } from "node:path";
+import { toPosix } from "../utils/paths.ts";
 
 /** Map of Notion page/database ID -> relative file path */
 export type LinkMap = Map<string, string>;
@@ -43,7 +44,7 @@ export function resolveNotionLinks(
 
     // Calculate relative path from current file to target
     const currentDir = dirname(currentFilePath);
-    const relativePath = relative(currentDir, targetPath);
+    const relativePath = toPosix(relative(currentDir, targetPath));
 
     // Use ./ prefix for same directory, otherwise the relative path
     return relativePath.startsWith("..") ? relativePath : "./" + relativePath;

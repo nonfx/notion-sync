@@ -231,7 +231,7 @@ Single-root `init` / `sync --output` still works; config-driven sync is an alter
 | `output` | No | Global output root (default: `./docs`) |
 | `concurrency` | No | Maximum in-flight Notion API requests and parallel sibling pages (default: `2`) |
 | `requestIntervalMs` | No | Minimum interval between Notion API request starts, including retries (default: `334` ms) |
-| `retry.attempts` | No | Max retry attempts on rate limits (default: `5`) |
+| `retry.attempts` | No | Max retry attempts on rate limits, and for reads also on 5xx responses, timeouts and dropped connections (default: `5`) |
 | `defaultExclude` | No | Glob selectors applied to every source's exclude set |
 | `defaultDateFilter` | No | Global date range on `last_edited_time`; intersects with per-source `dateFilter` |
 | `sources` | Yes | Non-empty array of Notion roots to pull |
@@ -389,7 +389,7 @@ bun run format
 
 ## Roadmap
 
-- [x] Retry logic for rate limits
+- [x] Retry logic for rate limits and transient failures
 - [x] Two-way sync — push local markdown back to Notion (`push`)
 - [x] Idempotent push — stamps `notion_id` into new files so re-push updates in place
 - [ ] Push: block-level diffing (currently clear-and-replace content)

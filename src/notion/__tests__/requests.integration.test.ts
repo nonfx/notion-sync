@@ -12,6 +12,13 @@ for (const scenario of [
   "synchronous-start",
   "pagination-retry",
   "partial",
+  "transient",
+  "transient-exhaustion",
+  "transient-premature",
+  "transient-timeout",
+  "transient-stalled-body",
+  "transient-write",
+  "nonretryable",
 ]) {
   it(`shares the request budget: ${scenario}`, async () => {
     const process = Bun.spawn(
@@ -34,5 +41,6 @@ for (const scenario of [
       process.exited,
     ]);
     expect({ code, output: stdout + stderr }).toEqual({ code: 0, output: "" });
-  });
+    // Outlasts the fixture's own 15 s watchdog, so a hang reports its scenario.
+  }, 20_000);
 }

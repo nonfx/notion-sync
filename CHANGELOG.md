@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-10-02
+
+### Fixed
+
+- **Transient failures abort the sync** - Only HTTP 429 was retried, so one
+  dropped connection ("socket hang up"), 5xx response or client timeout failed a
+  whole sync. Reads now retry these with exponential backoff under
+  `retry.attempts`. Writes that create content (`pages.create`,
+  `blocks.children.append`, `blocks.delete`) still retry only rate limits: the
+  server may have committed them before the response was lost.
+- **A timed-out request stays open** - The Notion SDK's timeout stopped waiting
+  but left the connection open, so a retry ran beside it, and a body cut short
+  after its headers never settled. Every request now has a 60 s deadline that
+  cancels it, and a body closed early (`ERR_STREAM_PREMATURE_CLOSE`) retries.
+- **Backslashes in index paths and links on Windows** - Index paths and
+  rewritten Markdown links now always use `/`.
+- **Incremental sync refetches every page with a relative output dir** - An
+  output dir spelled `./dir` or `dir/` left the dir prefix on every index path.
+  The next run then looked for `dir/dir/...`, found no files and refetched every
+  page. Index paths are now relative to the output dir for every spelling.
+- **Stale files survive** - Stale-file removal compared page ids, so a renamed
+  or moved page left its old file behind, and it swallowed every unlink error.
+  It now removes each old path that no page writes any more, fails the sync
+  when a removal fails, and saves the index only after cleanup, so the next run
+  retries it.
+
+### Upgrading an index written with a relative output dir
+
+The first 0.4.1 run refetches every page and rewrites the index with relative
+paths. Files of pages removed before or during that run cannot be located from
+the old paths and stay on disk. After that run, list the files the index does
+not name and delete them:
+
+```bash
+cd <output-dir>
+comm -13 <(jq -r '.pages[].path' .notion-rsync/index.json | sort) \
+  <(find . -name '*.md' -not -path './.notion-rsync/*' | sed 's|^\./||' | sort)
+```
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

@@ -279,6 +279,15 @@ export async function sync(options: SyncOptions): Promise<void> {
     }
   }
 
+  // 8. Remove files no page writes any more: pages deleted in Notion, and the
+  //    old path of a renamed or moved page. Cleanup runs before the index is
+  //    saved, so a failed removal leaves the old index to retry it next run.
+  const stalePaths = findStalePaths(index.pages, pages);
+  if (stalePaths.length > 0) {
+    log.info(`Removing ${stalePaths.length} stale files...`);
+    await removeStaleFiles(options.outputDir, stalePaths, options.dryRun);
+  }
+
   const updatedIndex: SyncIndex = {
     ...index,
     lastSync: new Date().toISOString(),
@@ -286,59 +295,43 @@ export async function sync(options: SyncOptions): Promise<void> {
   };
   await writeIndex(options.outputDir, updatedIndex);
 
-  // 8. Remove stale files (pages deleted in Notion)
-  const stalePageIds = findStalePages(index.pages, pages);
-  if (stalePageIds.length > 0) {
-    log.info(`Removing ${stalePageIds.length} stale files...`);
-    await removeStaleFiles(options.outputDir, index.pages, stalePageIds, options.dryRun);
-  }
-
   log.info("Sync complete!");
 }
 
 /**
- * Find page IDs that exist in old index but not in new results.
- * Key formats may differ between index generations, so compare normalized.
+ * Old file paths that no page in the new index writes. Comparing paths, not
+ * ids, also catches renames, and never removes a path another page now owns.
  */
-function findStalePages(
+function findStalePaths(
   oldPages: Record<string, PageState>,
   newPages: Record<string, PageState>
 ): string[] {
-  const newIds = new Set(Object.keys(newPages).map(normalizeId));
-  const stale: string[] = [];
-  for (const pageId of Object.keys(oldPages)) {
-    if (!newIds.has(normalizeId(pageId))) {
-      stale.push(pageId);
-    }
+  const livePaths = new Set(Object.values(newPages).map((page) => page.path));
+  const stale = new Set<string>();
+  for (const page of Object.values(oldPages)) {
+    if (!livePaths.has(page.path)) stale.add(page.path);
   }
-  return stale;
+  return [...stale];
 }
 
-/**
- * Remove files for pages that no longer exist in Notion
- */
 async function removeStaleFiles(
   outputDir: string,
-  oldPages: Record<string, PageState>,
-  stalePageIds: string[],
+  stalePaths: string[],
   dryRun?: boolean
 ): Promise<void> {
-  for (const pageId of stalePageIds) {
-    const pageState = oldPages[pageId];
-    if (!pageState) continue;
-
-    const filePath = join(outputDir, pageState.path);
+  for (const stalePath of stalePaths) {
+    const filePath = join(outputDir, stalePath);
 
     if (dryRun) {
       log.info(`[dry-run] Would remove: ${filePath}`);
-    } else {
-      try {
-        await unlink(filePath);
-        log.info(`Removed: ${filePath}`);
-      } catch (err) {
-        // File might already be gone
-        log.debug(`Failed to remove ${filePath}: ${err}`);
-      }
+      continue;
+    }
+    try {
+      await unlink(filePath);
+      log.info(`Removed: ${filePath}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      log.warn(`Already gone: ${filePath}`);
     }
   }
 }

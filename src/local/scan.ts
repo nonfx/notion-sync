@@ -15,6 +15,7 @@
 // the project's file-I/O guideline.
 import { readdir } from "node:fs/promises";
 import { join, basename, relative } from "node:path";
+import { toPosix } from "../utils/paths.ts";
 import { parseMarkdownFile } from "../markdown/frontmatter.ts";
 import { INDEX_DIR } from "../sync/index.ts";
 
@@ -31,10 +32,6 @@ export interface LocalNode {
   body: string;
   /** Child pages */
   children: LocalNode[];
-}
-
-function toPosix(path: string): string {
-  return path.split(/[\\/]/).join("/");
 }
 
 function titleFromFilename(name: string): string {
