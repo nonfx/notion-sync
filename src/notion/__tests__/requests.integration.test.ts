@@ -12,6 +12,8 @@ for (const scenario of [
   "synchronous-start",
   "pagination-retry",
   "partial",
+  "transient",
+  "transient-exhaustion",
 ]) {
   it(`shares the request budget: ${scenario}`, async () => {
     const process = Bun.spawn(

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-10-02
+
+### Fixed
+
+- **Transient failures abort the sync** - Only HTTP 429 was retried, so one
+  dropped connection ("socket hang up"), 5xx response or client timeout failed a
+  whole sync. These now retry with exponential backoff under `retry.attempts`.
+- **Incremental sync refetches every page with a relative output dir** - An
+  output dir spelled `./dir` or `dir/` left the dir prefix on every index path.
+  The next run then looked for `dir/dir/...`, found no files and refetched every
+  page; stale-file removal missed the same paths and failed silently. Index
+  paths are now relative to the output dir for every spelling. An index written
+  by an affected version heals on its next full run. A stale file that cannot be
+  removed now fails the sync; a file that is already gone logs a warning.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added

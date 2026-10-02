@@ -188,3 +188,70 @@ describe("sync date filter stale cleanup", () => {
     expect(indexAfterSecond?.pages[SYNC_ROOT_ID]).toBeDefined();
   });
 });
+
+// The CLI passes --output through verbatim, so "./mirror" and "mirror/" reach
+// the engine as given. Index paths must stay relative to the output dir for
+// every spelling, or the next run sees no files and refetches everything.
+describe("sync with a relative output dir", () => {
+  let parent: string;
+  let originalCwd: string;
+
+  beforeEach(async () => {
+    originalCwd = process.cwd();
+    parent = await mkdtemp(join(tmpdir(), "notion-rsync-engine-relative-"));
+    process.chdir(parent);
+    pagesById.clear();
+    childrenById.clear();
+    fetchPageMock.mockClear();
+    fetchChildrenMock.mockClear();
+    fetchBlocksMock.mockClear();
+    resetTreeConcurrency();
+
+    const root = makePage(SYNC_ROOT_ID, "Root", "2026-07-01T00:00:00.000Z");
+    const leaf = makePage(STALE_LEAF_ID, "Leaf", "2026-07-02T00:00:00.000Z");
+    pagesById.set(SYNC_ROOT_ID, root);
+    pagesById.set(STALE_LEAF_ID, leaf);
+    childrenById.set(SYNC_ROOT_ID, { pages: [leaf], databaseIds: [] });
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    await rm(parent, { recursive: true, force: true });
+  });
+
+  for (const outputDir of ["./mirror", "mirror/", "./mirror/"]) {
+    it(`skips unchanged pages on the second run (${outputDir})`, async () => {
+      const options = {
+        outputDir,
+        notionToken: "fake-token",
+        dryRun: false,
+        rootPageId: SYNC_ROOT_ID,
+      };
+      await sync(options);
+      expect(fetchBlocksMock).toHaveBeenCalledTimes(2);
+
+      const index = await loadIndex(outputDir);
+      expect(index?.pages[STALE_LEAF_ID]?.path).toBe("root/leaf.md");
+
+      fetchBlocksMock.mockClear();
+      await sync(options);
+      expect(fetchBlocksMock).toHaveBeenCalledTimes(0);
+    });
+
+    it(`removes the file of a page deleted in Notion (${outputDir})`, async () => {
+      const options = {
+        outputDir,
+        notionToken: "fake-token",
+        dryRun: false,
+        rootPageId: SYNC_ROOT_ID,
+      };
+      await sync(options);
+      const leafFile = join(parent, "mirror", "root", "leaf.md");
+      await expectFileExists(leafFile);
+
+      childrenById.set(SYNC_ROOT_ID, { pages: [], databaseIds: [] });
+      await sync(options);
+      await expect(readFile(leafFile)).rejects.toThrow();
+    });
+  }
+});

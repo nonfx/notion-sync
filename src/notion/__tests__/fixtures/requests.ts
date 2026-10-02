@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import { Client, LogLevel } from "@notionhq/client";
 import { fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
 import { setRequestLimits, setRetryAttempts, withRetry } from "../../requests.ts";
@@ -232,6 +233,48 @@ if (scenario === "global") {
     )
   );
   assertSpacing(starts, 334);
+} else if (scenario === "transient" || scenario === "transient-exhaustion") {
+  // A real server and the client's own fetch, so the error is the FetchError
+  // the Notion client raises in production ("socket hang up", ECONNRESET).
+  setRequestLimits({ concurrency: 1, minIntervalMs: 0 });
+  setRetryAttempts(scenario === "transient" ? 2 : 0);
+  let requests = 0;
+  const server: Server = createServer((request, response) => {
+    requests++;
+    if (requests === 1) {
+      request.socket.destroy();
+      return;
+    }
+    if (requests === 2) {
+      response.writeHead(502, { "content-type": "text/html" }).end("<html>Bad gateway</html>");
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(page("healthy")));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const client = new Client({
+    auth: "test",
+    logLevel: LogLevel.ERROR,
+    baseUrl: `http://127.0.0.1:${port}`,
+  });
+  try {
+    const result = await fetchPage(client, "flaky").then(
+      (value) => value,
+      (error: unknown) => error
+    );
+    if (scenario === "transient") {
+      assert.equal(requests, 3);
+      assert.equal((result as { id: string }).id, "healthy");
+    } else {
+      assert.equal(requests, 1);
+      assert.ok(result instanceof Error, String(result));
+      assert.equal((result as { code?: string }).code, "ECONNRESET", JSON.stringify(result));
+    }
+  } finally {
+    server.close();
+  }
 } else {
   throw new Error(`Unknown scenario: ${scenario}`);
 }

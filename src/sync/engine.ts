@@ -336,8 +336,8 @@ async function removeStaleFiles(
         await unlink(filePath);
         log.info(`Removed: ${filePath}`);
       } catch (err) {
-        // File might already be gone
-        log.debug(`Failed to remove ${filePath}: ${err}`);
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        log.warn(`Already gone: ${filePath}`);
       }
     }
   }
