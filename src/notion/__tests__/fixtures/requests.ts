@@ -300,6 +300,7 @@ if (scenario === "global") {
         seen.map((entry) => entry.path),
         ["/v1/pages/flaky", "/v1/pages/other", "/v1/pages/flaky", "/v1/pages/flaky"]
       );
+      assert.ok(seen[1]!.at - seen[0]!.at < 900, "the backoff held the request slot");
       assert.ok(seen[2]!.at - seen[0]!.at >= 990, "first retry skipped the backoff");
       assert.ok(seen[3]!.at - seen[2]!.at >= 1990, "second retry skipped the backoff");
     } else if (scenario === "transient-exhaustion") {
