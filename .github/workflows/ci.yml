@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - run: bun test
+      - run: bun run test
 
   build:
     name: Build

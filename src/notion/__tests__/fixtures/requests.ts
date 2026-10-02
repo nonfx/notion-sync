@@ -40,7 +40,13 @@ async function listen(
   const server = createServer(handler);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as { port: number };
-  return { port, close: () => server.close() };
+  return {
+    port,
+    close: () => {
+      server.closeAllConnections();
+      server.close();
+    },
+  };
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -65,6 +71,12 @@ function assertSpacing(starts: number[], interval: number): void {
 }
 
 const scenario = process.argv[2] ?? "";
+
+// A request with no deadline can hang forever. Fail instead of hanging the suite.
+setTimeout(() => {
+  console.error(`${scenario}: still running after 15 s`);
+  process.exit(1);
+}, 15_000).unref();
 if (scenario === "global") {
   setRequestLimits({ concurrency: 2, minIntervalMs: 8 });
   let active = 0;
@@ -281,6 +293,12 @@ if (scenario === "global") {
         setTimeout(() => response.destroy(), 20);
         return;
       }
+      if (scenario === "transient-stalled-body" && flakyAttempts === 1) {
+        // Headers arrive, then the body stops. Only the deadline can end it.
+        response.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+        response.write('{"object":"pa');
+        return;
+      }
       if (scenario === "transient-timeout" && flakyAttempts === 1) {
         // Never answer. The request deadline must close this connection.
         request.socket.on("close", () => seen.push({ path: "closed", at: performance.now() }));
@@ -327,6 +345,14 @@ if (scenario === "global") {
       const result = await settle(fetchPage(client, "flaky"));
       assert.equal((result as { id: string }).id, "healthy");
       assert.equal(flakyAttempts, 2);
+    } else if (scenario === "transient-stalled-body") {
+      const started = performance.now();
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal((result as { id: string }).id, "healthy");
+      assert.equal(flakyAttempts, 2);
+      // 200 ms deadline plus 1 s backoff. The SDK timeout covers only the
+      // headers, so without the deadline this read never ends.
+      assert.ok(performance.now() - started < 3_000, "the stalled body outlived the deadline");
     } else if (scenario === "transient-timeout") {
       const result = await settle(fetchPage(client, "flaky"));
       assert.equal((result as { id: string }).id, "healthy");

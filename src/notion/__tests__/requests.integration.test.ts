@@ -16,6 +16,7 @@ for (const scenario of [
   "transient-exhaustion",
   "transient-premature",
   "transient-timeout",
+  "transient-stalled-body",
   "transient-write",
   "nonretryable",
 ]) {
@@ -40,5 +41,6 @@ for (const scenario of [
       process.exited,
     ]);
     expect({ code, output: stdout + stderr }).toEqual({ code: 0, output: "" });
-  });
+    // Outlasts the fixture's own 15 s watchdog, so a hang reports its scenario.
+  }, 20_000);
 }

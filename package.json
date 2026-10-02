@@ -25,7 +25,7 @@
     "format": "oxfmt src/",
     "format:check": "oxfmt --check src/",
     "check": "bun run lint && bun run format:check",
-    "test": "bun test",
+    "test": "bun test --isolate",
     "prepublishOnly": "bun run build"
   },
   "engines": {
