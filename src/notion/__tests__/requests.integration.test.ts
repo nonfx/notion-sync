@@ -14,6 +14,8 @@ for (const scenario of [
   "partial",
   "transient",
   "transient-exhaustion",
+  "transient-write",
+  "nonretryable",
 ]) {
   it(`shares the request budget: ${scenario}`, async () => {
     const process = Bun.spawn(

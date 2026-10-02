@@ -77,7 +77,9 @@ export function createNotionClient(options: NotionClientOptions): Client {
 export async function fetchPage(client: Client, pageId: string): Promise<NotionPage> {
   log.debug(`Fetching page: ${pageId}`);
 
-  const response = await withRetry(() => client.pages.retrieve({ page_id: pageId }));
+  const response = await withRetry(() => client.pages.retrieve({ page_id: pageId }), {
+    idempotent: true,
+  });
 
   if (!isFullPage(response)) {
     throw new Error(`Page ${pageId} is not accessible or is a partial response`);
@@ -104,7 +106,7 @@ export async function fetchChildren(client: Client, blockId: string): Promise<Ch
     let blocks;
     try {
       blocks = await collectPaginatedAPI(
-        (args) => withRetry(() => client.blocks.children.list(args)),
+        (args) => withRetry(() => client.blocks.children.list(args), { idempotent: true }),
         { block_id: id }
       );
     } catch (error) {
@@ -139,7 +141,7 @@ export async function fetchBlocks(client: Client, blockId: string): Promise<Noti
   let blocks;
   try {
     blocks = await collectPaginatedAPI(
-      (args) => withRetry(() => client.blocks.children.list(args)),
+      (args) => withRetry(() => client.blocks.children.list(args), { idempotent: true }),
       { block_id: blockId }
     );
   } catch (err) {
@@ -181,7 +183,7 @@ async function fetchBlocksRecursive(
   let blocks;
   try {
     blocks = await collectPaginatedAPI(
-      (args) => withRetry(() => client.blocks.children.list(args)),
+      (args) => withRetry(() => client.blocks.children.list(args), { idempotent: true }),
       { block_id: blockId }
     );
   } catch (err) {
@@ -238,7 +240,9 @@ export function isLinkedDatabaseError(error: unknown): boolean {
 export async function fetchDatabase(client: Client, databaseId: string): Promise<NotionDatabase> {
   log.debug(`Fetching database: ${databaseId}`);
 
-  const response = await withRetry(() => client.databases.retrieve({ database_id: databaseId }));
+  const response = await withRetry(() => client.databases.retrieve({ database_id: databaseId }), {
+    idempotent: true,
+  });
 
   if (!isFullDatabase(response)) {
     throw new Error(`Database ${databaseId} is not accessible or is a partial response`);
@@ -257,7 +261,7 @@ export async function fetchDatabasePages(
   log.debug(`Fetching database pages: ${databaseId}`);
 
   const results = await collectPaginatedAPI(
-    (args) => withRetry(() => client.databases.query(args)),
+    (args) => withRetry(() => client.databases.query(args), { idempotent: true }),
     { database_id: databaseId }
   );
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Client, LogLevel } from "@notionhq/client";
 import { fetchBlocks, fetchDatabasePages, fetchPage } from "../../client.ts";
 import { setRequestLimits, setRetryAttempts, withRetry } from "../../requests.ts";
@@ -32,6 +32,19 @@ function node(id: string, children?: PageNode[]): PageNode {
     children: children ?? [],
     isDatabase: children !== undefined,
   };
+}
+
+async function listen(
+  handler: (request: IncomingMessage, response: ServerResponse) => void
+): Promise<{ port: number; close: () => void }> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return { port, close: () => server.close() };
+}
+
+function json(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }
 
 function assertSpacing(starts: number[], interval: number): void {
@@ -233,44 +246,77 @@ if (scenario === "global") {
     )
   );
   assertSpacing(starts, 334);
-} else if (scenario === "transient" || scenario === "transient-exhaustion") {
-  // A real server and the client's own fetch, so the error is the FetchError
-  // the Notion client raises in production ("socket hang up", ECONNRESET).
+} else if (scenario.startsWith("transient") || scenario === "nonretryable") {
+  // A real server and the client's own fetch, so a dropped connection raises
+  // the FetchError the Notion client raises in production (ECONNRESET).
   setRequestLimits({ concurrency: 1, minIntervalMs: 0 });
-  setRetryAttempts(scenario === "transient" ? 2 : 0);
-  let requests = 0;
-  const server: Server = createServer((request, response) => {
-    requests++;
-    if (requests === 1) {
+  setRetryAttempts(2);
+  const seen: Array<{ path: string; at: number }> = [];
+  let flakyAttempts = 0;
+  const server = await listen((request, response) => {
+    const path = new URL(request.url!, "http://local").pathname;
+    seen.push({ path, at: performance.now() });
+    if (scenario === "nonretryable") {
+      return json(response, 403, { object: "error", code: "restricted_resource", message: "no" });
+    }
+    if (path === "/v1/pages" && request.method === "POST") {
+      // The server commits the page, then the response is lost.
       request.socket.destroy();
       return;
     }
-    if (requests === 2) {
-      response.writeHead(502, { "content-type": "text/html" }).end("<html>Bad gateway</html>");
-      return;
+    if (path.endsWith("/flaky")) {
+      flakyAttempts++;
+      if (scenario === "transient-exhaustion" || flakyAttempts === 1) {
+        request.socket.destroy();
+        return;
+      }
+      if (flakyAttempts === 2) {
+        response.writeHead(502, { "content-type": "text/html" }).end("<html>Bad gateway</html>");
+        return;
+      }
     }
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(page("healthy")));
+    json(response, 200, page(path.endsWith("/flaky") ? "healthy" : "other"));
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as { port: number };
   const client = new Client({
     auth: "test",
     logLevel: LogLevel.ERROR,
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl: `http://127.0.0.1:${server.port}`,
   });
-  try {
-    const result = await fetchPage(client, "flaky").then(
-      (value) => value,
-      (error: unknown) => error
+  const settle = <T>(promise: Promise<T>) =>
+    promise.then(
+      (v) => v,
+      (e: unknown) => e
     );
+  try {
     if (scenario === "transient") {
-      assert.equal(requests, 3);
+      const flaky = settle(fetchPage(client, "flaky"));
+      // Submitted after the first attempt fails; it must not wait out the backoff.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const other = await fetchPage(client, "other");
+      assert.equal(other.id, "other");
+      const result = await flaky;
       assert.equal((result as { id: string }).id, "healthy");
-    } else {
-      assert.equal(requests, 1);
+      assert.deepEqual(
+        seen.map((entry) => entry.path),
+        ["/v1/pages/flaky", "/v1/pages/other", "/v1/pages/flaky", "/v1/pages/flaky"]
+      );
+      assert.ok(seen[2]!.at - seen[0]!.at >= 990, "first retry skipped the backoff");
+      assert.ok(seen[3]!.at - seen[2]!.at >= 1990, "second retry skipped the backoff");
+    } else if (scenario === "transient-exhaustion") {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.equal(seen.length, 3);
       assert.ok(result instanceof Error, String(result));
-      assert.equal((result as { code?: string }).code, "ECONNRESET", JSON.stringify(result));
+      assert.equal((result as { code?: string }).code, "ECONNRESET");
+    } else if (scenario === "transient-write") {
+      const result = await settle(
+        createNotionWriter(client).createPage({ id: "parent", type: "page" }, "New page")
+      );
+      assert.ok(result instanceof Error, String(result));
+      assert.equal(seen.length, 1, "a lost create response was retried");
+    } else {
+      const result = await settle(fetchPage(client, "flaky"));
+      assert.ok(result instanceof Error, String(result));
+      assert.equal(seen.length, 1, "a 403 was retried");
     }
   } finally {
     server.close();

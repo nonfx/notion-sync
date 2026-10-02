@@ -134,10 +134,17 @@ function retryDelay(error: unknown, attempt: number): number {
 }
 
 /**
- * Retries rate limits and transient failures. Every attempt joins the shared
- * queue. Backoff holds no request slot.
+ * Retries rate limits, which Notion rejects before doing any work. An
+ * idempotent request also retries transient failures. A write is not retried
+ * after one: the server may have committed it before the response was lost,
+ * and a repeat would duplicate the page or blocks. Every attempt joins the
+ * shared queue. Backoff holds no request slot.
  */
-export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttempts): Promise<T> {
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  { idempotent = false }: { idempotent?: boolean } = {}
+): Promise<T> {
+  const maxRetries = retryAttempts;
   for (let attempt = 0; ; attempt++) {
     try {
       return await schedule(async () => {
@@ -160,7 +167,7 @@ export async function withRetry<T>(fn: () => Promise<T>, maxRetries = retryAttem
     } catch (error) {
       if (attempt >= maxRetries) throw error;
       if (isRateLimited(error)) continue;
-      if (!isTransient(error)) throw error;
+      if (!idempotent || !isTransient(error)) throw error;
       // Back off outside the queue: one flaky request must not stall the rest.
       const delay = retryDelay(error, attempt);
       log.warn(

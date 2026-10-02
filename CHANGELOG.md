@@ -8,14 +8,32 @@ All notable changes to this project will be documented in this file.
 
 - **Transient failures abort the sync** - Only HTTP 429 was retried, so one
   dropped connection ("socket hang up"), 5xx response or client timeout failed a
-  whole sync. These now retry with exponential backoff under `retry.attempts`.
+  whole sync. Reads now retry these with exponential backoff under
+  `retry.attempts`. Writes that create content (`pages.create`,
+  `blocks.children.append`, `blocks.delete`) still retry only rate limits: the
+  server may have committed them before the response was lost.
 - **Incremental sync refetches every page with a relative output dir** - An
   output dir spelled `./dir` or `dir/` left the dir prefix on every index path.
   The next run then looked for `dir/dir/...`, found no files and refetched every
-  page; stale-file removal missed the same paths and failed silently. Index
-  paths are now relative to the output dir for every spelling. An index written
-  by an affected version heals on its next full run. A stale file that cannot be
-  removed now fails the sync; a file that is already gone logs a warning.
+  page. Index paths are now relative to the output dir for every spelling.
+- **Stale files survive** - Stale-file removal compared page ids, so a renamed
+  or moved page left its old file behind, and it swallowed every unlink error.
+  It now removes each old path that no page writes any more, fails the sync
+  when a removal fails, and saves the index only after cleanup, so the next run
+  retries it.
+
+### Upgrading an index written with a relative output dir
+
+The first 0.4.1 run refetches every page and rewrites the index with relative
+paths. Files of pages removed before or during that run cannot be located from
+the old paths and stay on disk. After that run, list the files the index does
+not name and delete them:
+
+```bash
+cd <output-dir>
+comm -13 <(jq -r '.pages[].path' .notion-rsync/index.json | sort) \
+  <(find . -name '*.md' -not -path './.notion-rsync/*' | sed 's|^\./||' | sort)
+```
 
 ## [0.3.0] - 2026-08-04
 

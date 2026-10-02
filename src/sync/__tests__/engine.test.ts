@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { mkdtemp, rm, access, readFile } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Client } from "@notionhq/client";
@@ -254,4 +254,57 @@ describe("sync with a relative output dir", () => {
       await expect(readFile(leafFile)).rejects.toThrow();
     });
   }
+});
+
+describe("sync stale-file cleanup", () => {
+  let outputDir: string;
+  const options = () => ({
+    outputDir,
+    notionToken: "fake-token",
+    dryRun: false,
+    rootPageId: SYNC_ROOT_ID,
+  });
+
+  beforeEach(async () => {
+    outputDir = await mkdtemp(join(tmpdir(), "notion-rsync-engine-cleanup-"));
+    pagesById.clear();
+    childrenById.clear();
+    resetTreeConcurrency();
+    const root = makePage(SYNC_ROOT_ID, "Root", "2026-07-01T00:00:00.000Z");
+    const leaf = makePage(STALE_LEAF_ID, "Leaf", "2026-07-02T00:00:00.000Z");
+    pagesById.set(SYNC_ROOT_ID, root);
+    pagesById.set(STALE_LEAF_ID, leaf);
+    childrenById.set(SYNC_ROOT_ID, { pages: [leaf], databaseIds: [] });
+  });
+
+  afterEach(async () => {
+    await chmod(join(outputDir, "root"), 0o755).catch(() => undefined);
+    await rm(outputDir, { recursive: true, force: true });
+  });
+
+  it("removes the old file of a renamed page", async () => {
+    await sync(options());
+    const renamed = makePage(STALE_LEAF_ID, "Leaf Renamed", "2026-07-03T00:00:00.000Z");
+    pagesById.set(STALE_LEAF_ID, renamed);
+    childrenById.set(SYNC_ROOT_ID, { pages: [renamed], databaseIds: [] });
+
+    await sync(options());
+
+    await expect(readFile(join(outputDir, "root", "leaf.md"))).rejects.toThrow();
+    await expectFileExists(join(outputDir, "root", "leaf-renamed.md"));
+  });
+
+  it("keeps a failed removal pending for the next run", async () => {
+    await sync(options());
+    const leafFile = join(outputDir, "root", "leaf.md");
+    childrenById.set(SYNC_ROOT_ID, { pages: [], databaseIds: [] });
+
+    await chmod(join(outputDir, "root"), 0o555);
+    await expect(sync(options())).rejects.toThrow();
+    await expectFileExists(leafFile);
+
+    await chmod(join(outputDir, "root"), 0o755);
+    await sync(options());
+    await expect(readFile(leafFile)).rejects.toThrow();
+  });
 });
